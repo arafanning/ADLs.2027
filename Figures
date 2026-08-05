@@ -1,0 +1,910 @@
+
+# ============================================================
+# ADL PAPER FIGURES
+# Ordered to match analytic decision-trail document
+# ============================================================
+
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(lmtest)
+library(sandwich)
+library(MASS)
+library(tidyr)
+
+# Optional: folder for saved figures
+if (!dir.exists("ADL_figures")) {
+  dir.create("ADL_figures")
+}
+
+# ============================================================
+# FIGURE 1. Cannabis exposure group distribution
+# ============================================================
+
+cannabis_group_counts <- adl_work %>%
+  dplyr::filter(!is.na(du_mar4_12m_aBin_ord)) %>%
+  dplyr::count(du_mar4_12m_aBin_ord) %>%
+  dplyr::mutate(
+    cannabis_group = factor(
+      du_mar4_12m_aBin_ord,
+      levels = c("none", "low", "high"),
+      labels = c("None", "Low", "High"),
+      ordered = TRUE
+    ),
+    label = paste0("N = ", n)
+  )
+
+fig1_cannabis_group_counts <- ggplot(
+  cannabis_group_counts,
+  aes(x = cannabis_group, y = n)
+) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = label), vjust = -0.4, size = 4) +
+  labs(
+    title = "Past-Year Cannabis Exposure Groups",
+    x = "Past-year cannabis exposure",
+    y = "Number of participants"
+  ) +
+  theme_classic(base_size = 14)
+
+fig1_cannabis_group_counts
+
+ggsave(
+  filename = "ADL_figures/Figure1_cannabis_group_counts.png",
+  plot = fig1_cannabis_group_counts,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 2. Raw ADL decline score distribution
+# ============================================================
+
+fig2_raw_adl_distribution <- ggplot(
+  adl_work,
+  aes(x = adl_total)
+) +
+  geom_histogram(bins = 25, boundary = 0) +
+  labs(
+    title = "Distribution of Raw ADL Decline Score",
+    subtitle = "Zero-heavy and right-skewed distribution",
+    x = "Raw ADL decline score",
+    y = "Number of participants"
+  ) +
+  theme_classic(base_size = 14)
+
+fig2_raw_adl_distribution
+
+ggsave(
+  filename = "ADL_figures/Figure2_raw_adl_total_distribution.png",
+  plot = fig2_raw_adl_distribution,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 3. Primary ordinal ADL decline categories
+# Outcome: 0, 1, or 2+ declined domains
+# ============================================================
+
+ordinal_decline_counts <- adl_work %>%
+  dplyr::filter(!is.na(adl_declined_domain_ord)) %>%
+  dplyr::count(adl_declined_domain_ord) %>%
+  dplyr::mutate(
+    decline_category = factor(
+      adl_declined_domain_ord,
+      levels = c(
+        "0_no_decline",
+        "1_domain_decline",
+        "2plus_domain_decline"
+      ),
+      labels = c(
+        "0 declined domains",
+        "1 declined domain",
+        "2+ declined domains"
+      ),
+      ordered = TRUE
+    ),
+    label = paste0("N = ", n)
+  )
+
+fig3_primary_ordinal_counts <- ggplot(
+  ordinal_decline_counts,
+  aes(x = decline_category, y = n)
+) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = label), vjust = -0.4, size = 4) +
+  labs(
+    title = "Primary Ordinal ADL Decline Outcome",
+    subtitle = "Outcome based on number of declined ADL domains",
+    x = "ADL decline category",
+    y = "Number of participants"
+  ) +
+  theme_classic(base_size = 14)
+
+fig3_primary_ordinal_counts
+
+ggsave(
+  filename = "ADL_figures/Figure3_primary_ordinal_ADL_decline_counts.png",
+  plot = fig3_primary_ordinal_counts,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 4. Raw adl_total HC3 cannabis effects across steps
+# ============================================================
+
+library(dplyr)
+library(lmtest)
+library(sandwich)
+library(ggplot2)
+library(tibble)
+
+# ------------------------------------------------------------
+# Robust helper function for HC3 results
+# ------------------------------------------------------------
+
+tidy_hc3 <- function(model, model_name) {
+  
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  # IMPORTANT: convert coeftest object to matrix first
+  hc3_df <- as.data.frame(as.matrix(hc3))
+  
+  # Rename columns safely
+  names(hc3_df) <- c(
+    "estimate",
+    "std_error_hc3",
+    "statistic",
+    "p.value"
+  )
+  
+  hc3_df %>%
+    tibble::rownames_to_column("term") %>%
+    dplyr::mutate(model = model_name) %>%
+    dplyr::select(
+      model,
+      term,
+      estimate,
+      std_error_hc3,
+      statistic,
+      p.value
+    )
+}
+
+# ============================================================
+# FIGURE 4. Raw adl_total HC3 cannabis effects across steps
+# Fixed HC3 helper
+# ============================================================
+
+library(dplyr)
+library(lmtest)
+library(sandwich)
+library(ggplot2)
+library(tibble)
+
+tidy_hc3 <- function(model, model_name) {
+  
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  # Force the coeftest object into a plain numeric matrix
+  hc3_mat <- unclass(hc3)
+  
+  # Build dataframe manually by column position
+  hc3_df <- tibble::tibble(
+    term = rownames(hc3_mat),
+    estimate = hc3_mat[, 1],
+    std_error_hc3 = hc3_mat[, 2],
+    statistic = hc3_mat[, 3],
+    p.value = hc3_mat[, 4],
+    model = model_name
+  ) %>%
+    dplyr::select(
+      model,
+      term,
+      estimate,
+      std_error_hc3,
+      statistic,
+      p.value
+    )
+  
+  return(hc3_df)
+}
+
+raw_adl_hc3_results <- dplyr::bind_rows(
+  tidy_hc3(model_raw_0_cannabis, "0 Cannabis only"),
+  tidy_hc3(model_raw_1_core, "1 Core adjusted"),
+  tidy_hc3(model_raw_2_demo, "2 Demographic-expanded"),
+  tidy_hc3(model_raw_3_hiv, "3 HIV-adjusted")
+)
+
+raw_adl_hc3_results
+
+raw_adl_cannabis_plot_df <- raw_adl_hc3_results %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::mutate(
+    cannabis_term = dplyr::case_when(
+      grepl("\\.L", term) ~ "Linear cannabis contrast",
+      grepl("\\.Q", term) ~ "Quadratic cannabis contrast",
+      TRUE ~ term
+    ),
+    ci_low = estimate - 1.96 * std_error_hc3,
+    ci_high = estimate + 1.96 * std_error_hc3,
+    model = factor(
+      model,
+      levels = c(
+        "0 Cannabis only",
+        "1 Core adjusted",
+        "2 Demographic-expanded",
+        "3 HIV-adjusted"
+      ),
+      ordered = TRUE
+    )
+  )
+
+raw_adl_cannabis_plot_df
+
+fig4_raw_adl_hc3 <- ggplot(
+  raw_adl_cannabis_plot_df,
+  aes(
+    x = model,
+    y = estimate,
+    group = cannabis_term,
+    linetype = cannabis_term,
+    shape = cannabis_term
+  )
+) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_point(size = 3) +
+  geom_line() +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.12
+  ) +
+  labs(
+    title = "Raw ADL Decline Sensitivity Model",
+    subtitle = "Cannabis effects across sequential adjustment models; HC3 robust 95% CIs",
+    x = "Model step",
+    y = "Regression coefficient for raw ADL decline score",
+    linetype = "Cannabis term",
+    shape = "Cannabis term"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 35, hjust = 1)
+  )
+
+fig4_raw_adl_hc3
+
+
+
+
+
+
+
+
+# ============================================================
+# FIGURE 5. Predicted probabilities from primary ordinal model
+# Model: core adjusted ordinal ADL decline
+# ============================================================
+
+# Use core adjusted model as primary display model
+# model_ord_1_core should already exist
+
+newdata_ord_core <- expand.grid(
+  du_mar4_12m_aBin_ord = factor(
+    c("none", "low", "high"),
+    levels = c("none", "low", "high"),
+    ordered = TRUE
+  ),
+  phq_2_age_c = mean(adl_work$phq_2_age_c, na.rm = TRUE),
+  bdi_total = mean(adl_work$bdi_total, na.rm = TRUE),
+  sex_covfac = names(sort(table(adl_work$sex_covfac), decreasing = TRUE))[1]
+)
+
+newdata_ord_core$sex_covfac <- factor(
+  newdata_ord_core$sex_covfac,
+  levels = levels(adl_work$sex_covfac)
+)
+
+pred_ord_core <- predict(
+  model_ord_1_core,
+  newdata = newdata_ord_core,
+  type = "probs"
+)
+
+pred_ord_core_df <- cbind(
+  newdata_ord_core,
+  as.data.frame(pred_ord_core)
+) %>%
+  tidyr::pivot_longer(
+    cols = c(
+      "0_no_decline",
+      "1_domain_decline",
+      "2plus_domain_decline"
+    ),
+    names_to = "adl_decline_category",
+    values_to = "predicted_probability"
+  ) %>%
+  dplyr::mutate(
+    cannabis_group = factor(
+      du_mar4_12m_aBin_ord,
+      levels = c("none", "low", "high"),
+      labels = c("None", "Low", "High"),
+      ordered = TRUE
+    ),
+    adl_decline_category = factor(
+      adl_decline_category,
+      levels = c(
+        "0_no_decline",
+        "1_domain_decline",
+        "2plus_domain_decline"
+      ),
+      labels = c(
+        "No decline",
+        "1 declined domain",
+        "2+ declined domains"
+      ),
+      ordered = TRUE
+    )
+  )
+
+fig5_ord_pred_probs <- ggplot(
+  pred_ord_core_df,
+  aes(
+    x = cannabis_group,
+    y = predicted_probability,
+    group = adl_decline_category,
+    linetype = adl_decline_category,
+    shape = adl_decline_category
+  )
+) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(
+    title = "Predicted Probability of ADL Decline Category by Cannabis Exposure",
+    subtitle = "Core adjusted ordinal model: age, BDI, and sex",
+    x = "Past-year cannabis exposure",
+    y = "Predicted probability",
+    linetype = "ADL decline category",
+    shape = "ADL decline category"
+  ) +
+  theme_classic(base_size = 14)
+
+fig5_ord_pred_probs
+
+ggsave(
+  filename = "ADL_figures/Figure5_primary_ordinal_predicted_probabilities.png",
+  plot = fig5_ord_pred_probs,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 6. Cannabis ORs across primary ordinal model steps
+# ============================================================
+
+tidy_polr_with_p <- function(model, model_name) {
+  
+  tidy_df <- broom::tidy(
+    model,
+    conf.int = TRUE,
+    exponentiate = TRUE
+  )
+  
+  # broom sometimes does not return p-values for polr
+  tidy_df %>%
+    dplyr::mutate(
+      p.value = 2 * pnorm(abs(statistic), lower.tail = FALSE),
+      model = model_name
+    )
+}
+
+ordinal_results <- dplyr::bind_rows(
+  tidy_polr_with_p(model_ord_0_cannabis, "0 Cannabis only"),
+  tidy_polr_with_p(model_ord_1_core, "1 Core adjusted"),
+  tidy_polr_with_p(model_ord_2_demo, "2 Demographic-expanded"),
+  tidy_polr_with_p(model_ord_3_hiv, "3 HIV-adjusted")
+)
+
+ordinal_cannabis_plot_df <- ordinal_results %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::mutate(
+    cannabis_term = dplyr::case_when(
+      grepl("\\.L", term) ~ "Linear cannabis contrast",
+      grepl("\\.Q", term) ~ "Quadratic cannabis contrast"
+    ),
+    model = factor(
+      model,
+      levels = c(
+        "0 Cannabis only",
+        "1 Core adjusted",
+        "2 Demographic-expanded",
+        "3 HIV-adjusted"
+      ),
+      ordered = TRUE
+    )
+  )
+
+fig6_ord_or_steps <- ggplot(
+  ordinal_cannabis_plot_df,
+  aes(
+    x = model,
+    y = estimate,
+    group = cannabis_term,
+    linetype = cannabis_term,
+    shape = cannabis_term
+  )
+) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point(size = 3) +
+  geom_line() +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.12
+  ) +
+  labs(
+    title = "Cannabis Effects Across Primary Ordinal ADL Model Steps",
+    subtitle = "Outcome: 0, 1, or 2+ declined ADL domains",
+    x = "Model step",
+    y = "Odds ratio",
+    linetype = "Cannabis term",
+    shape = "Cannabis term"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 35, hjust = 1)
+  )
+
+fig6_ord_or_steps
+
+ggsave(
+  filename = "ADL_figures/Figure6_primary_ordinal_cannabis_ORs_steps.png",
+  plot = fig6_ord_or_steps,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 7. Observed any ADL decline by cannabis group
+# ============================================================
+
+observed_any_decline <- adl_work %>%
+  dplyr::filter(
+    !is.na(du_mar4_12m_aBin_ord),
+    !is.na(adl_total_any_explore)
+  ) %>%
+  dplyr::group_by(du_mar4_12m_aBin_ord) %>%
+  dplyr::summarise(
+    n_total = n(),
+    n_any_decline = sum(adl_total_any_explore == "any_decline"),
+    prop_any_decline = n_any_decline / n_total,
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    cannabis_group = factor(
+      du_mar4_12m_aBin_ord,
+      levels = c("none", "low", "high"),
+      labels = c("None", "Low", "High"),
+      ordered = TRUE
+    ),
+    label = paste0(
+      n_any_decline,
+      "/",
+      n_total,
+      "\n",
+      round(prop_any_decline * 100, 1),
+      "%"
+    )
+  )
+
+fig7_observed_any_decline <- ggplot(
+  observed_any_decline,
+  aes(x = cannabis_group, y = prop_any_decline)
+) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = label), vjust = -0.4, size = 4) +
+  ylim(0, 1) +
+  labs(
+    title = "Observed Any ADL Decline by Cannabis Exposure",
+    subtitle = "Descriptive proportions before covariate adjustment",
+    x = "Past-year cannabis exposure",
+    y = "Proportion with any ADL decline"
+  ) +
+  theme_classic(base_size = 14)
+
+fig7_observed_any_decline
+
+ggsave(
+  filename = "ADL_figures/Figure7_observed_any_ADL_decline.png",
+  plot = fig7_observed_any_decline,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 8. Predicted probability of any ADL decline
+# Core adjusted binary logistic model
+# ============================================================
+
+newdata_any_core <- expand.grid(
+  du_mar4_12m_aBin_ord = factor(
+    c("none", "low", "high"),
+    levels = c("none", "low", "high"),
+    ordered = TRUE
+  ),
+  phq_2_age_c = mean(adl_work$phq_2_age_c, na.rm = TRUE),
+  bdi_total = mean(adl_work$bdi_total, na.rm = TRUE),
+  sex_covfac = names(sort(table(adl_work$sex_covfac), decreasing = TRUE))[1]
+)
+
+newdata_any_core$sex_covfac <- factor(
+  newdata_any_core$sex_covfac,
+  levels = levels(adl_work$sex_covfac)
+)
+
+pred_any_core <- predict(
+  model_any_1_core,
+  newdata = newdata_any_core,
+  type = "link",
+  se.fit = TRUE
+)
+
+pred_any_core_df <- newdata_any_core %>%
+  dplyr::mutate(
+    fit_link = pred_any_core$fit,
+    se_link = pred_any_core$se.fit,
+    predicted_probability = plogis(fit_link),
+    ci_low = plogis(fit_link - 1.96 * se_link),
+    ci_high = plogis(fit_link + 1.96 * se_link),
+    cannabis_group = factor(
+      du_mar4_12m_aBin_ord,
+      levels = c("none", "low", "high"),
+      labels = c("None", "Low", "High"),
+      ordered = TRUE
+    )
+  )
+
+fig8_pred_any_decline <- ggplot(
+  pred_any_core_df,
+  aes(x = cannabis_group, y = predicted_probability, group = 1)
+) +
+  geom_point(size = 3) +
+  geom_line() +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.12
+  ) +
+  ylim(0, 1) +
+  labs(
+    title = "Predicted Probability of Any ADL Decline by Cannabis Exposure",
+    subtitle = "Core adjusted model: age, BDI, and sex",
+    x = "Past-year cannabis exposure",
+    y = "Predicted probability of any ADL decline"
+  ) +
+  theme_classic(base_size = 14)
+
+fig8_pred_any_decline
+
+ggsave(
+  filename = "ADL_figures/Figure8_predicted_any_ADL_decline_core.png",
+  plot = fig8_pred_any_decline,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 9. Binary any ADL decline cannabis ORs across steps
+# ============================================================
+
+binary_any_results <- dplyr::bind_rows(
+  broom::tidy(model_any_0_cannabis, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "0 Cannabis only"),
+  broom::tidy(model_any_1_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "1 Core adjusted"),
+  broom::tidy(model_any_2_demo, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "2 Demographic-expanded"),
+  broom::tidy(model_any_3_hiv, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "3 HIV-adjusted")
+)
+
+binary_any_cannabis_plot_df <- binary_any_results %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::mutate(
+    cannabis_term = dplyr::case_when(
+      grepl("\\.L", term) ~ "Linear cannabis contrast",
+      grepl("\\.Q", term) ~ "Quadratic cannabis contrast"
+    ),
+    model = factor(
+      model,
+      levels = c(
+        "0 Cannabis only",
+        "1 Core adjusted",
+        "2 Demographic-expanded",
+        "3 HIV-adjusted"
+      ),
+      ordered = TRUE
+    )
+  )
+
+fig9_binary_any_or_steps <- ggplot(
+  binary_any_cannabis_plot_df,
+  aes(
+    x = model,
+    y = estimate,
+    group = cannabis_term,
+    linetype = cannabis_term,
+    shape = cannabis_term
+  )
+) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point(size = 3) +
+  geom_line() +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.12
+  ) +
+  labs(
+    title = "Cannabis Effects Across Binary ADL Decline Model Steps",
+    subtitle = "Outcome: any ADL decline vs no decline",
+    x = "Model step",
+    y = "Odds ratio",
+    linetype = "Cannabis term",
+    shape = "Cannabis term"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 35, hjust = 1)
+  )
+
+fig9_binary_any_or_steps
+
+ggsave(
+  filename = "ADL_figures/Figure9_binary_any_decline_cannabis_ORs_steps.png",
+  plot = fig9_binary_any_or_steps,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 10. Continuous current ADL burden HC3 cannabis effects
+# ============================================================
+
+current_adl_hc3_results <- dplyr::bind_rows(
+  tidy_hc3(model_now_cont_0_cannabis, "0 Cannabis only"),
+  tidy_hc3(model_now_cont_1_core, "1 Core adjusted"),
+  tidy_hc3(model_now_cont_2_demo, "2 Demographic-expanded"),
+  tidy_hc3(model_now_cont_3_hiv, "3 HIV-adjusted")
+)
+
+current_adl_cannabis_plot_df <- current_adl_hc3_results %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::mutate(
+    cannabis_term = dplyr::case_when(
+      grepl("\\.L", term) ~ "Linear cannabis contrast",
+      grepl("\\.Q", term) ~ "Quadratic cannabis contrast"
+    ),
+    ci_low = estimate - 1.96 * std_error_hc3,
+    ci_high = estimate + 1.96 * std_error_hc3,
+    model = factor(
+      model,
+      levels = c(
+        "0 Cannabis only",
+        "1 Core adjusted",
+        "2 Demographic-expanded",
+        "3 HIV-adjusted"
+      ),
+      ordered = TRUE
+    )
+  )
+
+fig10_current_hc3 <- ggplot(
+  current_adl_cannabis_plot_df,
+  aes(
+    x = model,
+    y = estimate,
+    group = cannabis_term,
+    linetype = cannabis_term,
+    shape = cannabis_term
+  )
+) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_point(size = 3) +
+  geom_line() +
+  geom_errorbar(
+    aes(ymin = ci_low, ymax = ci_high),
+    width = 0.12
+  ) +
+  labs(
+    title = "Current ADL Burden Sensitivity Model",
+    subtitle = "Cannabis effects across sequential adjustment models; HC3 robust 95% CIs",
+    x = "Model step",
+    y = "Regression coefficient for current ADL burden score",
+    linetype = "Cannabis term",
+    shape = "Cannabis term"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 35, hjust = 1)
+  )
+
+fig10_current_hc3
+
+ggsave(
+  filename = "ADL_figures/Figure10_current_ADL_burden_HC3_cannabis_coefficients.png",
+  plot = fig10_current_hc3,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 11. Ordinal current ADL burden categories
+# ============================================================
+
+current_burden_counts <- adl_work %>%
+  dplyr::filter(!is.na(adl_now_ordinal_burden)) %>%
+  dplyr::count(adl_now_ordinal_burden) %>%
+  dplyr::mutate(
+    burden_category = factor(
+      adl_now_ordinal_burden,
+      levels = c(
+        "no_current_difficulty",
+        "low_current_difficulty",
+        "higher_current_difficulty"
+      ),
+      labels = c(
+        "No current difficulty",
+        "Low current difficulty",
+        "Higher current difficulty"
+      ),
+      ordered = TRUE
+    ),
+    label = paste0("N = ", n)
+  )
+
+fig11_current_burden_counts <- ggplot(
+  current_burden_counts,
+  aes(x = burden_category, y = n)
+) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = label), vjust = -0.4, size = 4) +
+  labs(
+    title = "Ordinal Current ADL Burden Outcome",
+    subtitle = "No, low, and higher current ADL difficulty",
+    x = "Current ADL burden category",
+    y = "Number of participants"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 25, hjust = 1)
+  )
+
+fig11_current_burden_counts
+
+ggsave(
+  filename = "ADL_figures/Figure11_ordinal_current_ADL_burden_counts.png",
+  plot = fig11_current_burden_counts,
+  width = 8,
+  height = 5,
+  dpi = 300
+)
+
+# ============================================================
+
+
+# ============================================================
+# FIGURE 13. Cannabis ORs across ordinal current burden models
+# ============================================================
+
+current_ord_results <- dplyr::bind_rows(
+  tidy_polr_with_p(model_now_ord_0_cannabis, "0 Cannabis only"),
+  tidy_polr_with_p(model_now_ord_1_core, "1 Core adjusted"),
+  tidy_polr_with_p(model_now_ord_2_demo, "2 Demographic-expanded"),
+  tidy_polr_with_p(model_now_ord_3_hiv, "3 HIV-adjusted")
+)
+
+current_ord_cannabis_plot_df <- current_ord_results %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::mutate(
+    cannabis_term = dplyr::case_when(
+      grepl("\\.L", term) ~ "Linear cannabis contrast",
+      grepl("\\.Q", term) ~ "Quadratic cannabis contrast"
+    ),
+    model = factor(
+      model,
+      levels = c(
+        "0 Cannabis only",
+        "1 Core adjusted",
+        "2 Demographic-expanded",
+        "3 HIV-adjusted"
+      ),
+      ordered = TRUE
+    )
+  )
+
+fig13_current_ord_or_steps <- ggplot(
+  current_ord_cannabis_plot_df,
+  aes(
+    x = model,
+    y = estimate,
+    group = cannabis_term,
+    linetype = cannabis_term,
+    shape = cannabis_term
+  )
+) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point(size = 3) +
+  geom_line() +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.12
+  ) +
+  labs(
+    title = "Cannabis Effects Across Ordinal Current ADL Burden Model Steps",
+    subtitle = "Outcome: no, low, or higher current ADL difficulty",
+    x = "Model step",
+    y = "Odds ratio",
+    linetype = "Cannabis term",
+    shape = "Cannabis term"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 35, hjust = 1)
+  )
+
+fig13_current_ord_or_steps
+
+ggsave(
+  filename = "ADL_figures/Figure13_current_ordinal_ADL_burden_cannabis_ORs_steps.png",
+  plot = fig13_current_ord_or_steps,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+
+# ============================================================
+# FIGURE 14. Logistic simulation power curve
+# Requires object: binary_any_sim_power
+# ============================================================
+
+fig14_binary_power_curve <- ggplot(
+  binary_any_sim_power,
+  aes(x = cannabis_OR, y = estimated_power)
+) +
+  geom_line() +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0.80, linetype = "dashed") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Simulation-Based Power for Binary Any-ADL-Decline Model",
+    subtitle = "Power to detect hypothetical linear cannabis odds ratios",
+    x = "Hypothetical cannabis odds ratio",
+    y = "Estimated power"
+  ) +
+  theme_classic(base_size = 14)
+
+fig14_binary_power_curve
+
+ggsave(
+  filename = "ADL_figures/Figure14_binary_logistic_power_curve.png",
+  plot = fig14_binary_power_curve,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
