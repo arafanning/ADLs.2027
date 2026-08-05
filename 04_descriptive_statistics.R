@@ -3259,3 +3259,3572 @@ current_linear_power_summary
 binary_any_sim_power
 interaction_capacity
 
+
+
+
+
+
+# ============================================================
+# ADL OUTCOME MODELS
+# Hierarchical / sequential covariate adjustment
+# ============================================================
+
+library(dplyr)
+library(broom)
+library(MASS)
+library(emmeans)
+
+# ------------------------------------------------------------
+# 0. Make sure core ADL outcome variables exist
+# ------------------------------------------------------------
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    
+    # Recalculated proportional ADL decline score
+    adl_total_calc = (adl_b_sum_now - adl_c_sum_best) / adl_a_no,
+    
+    # Binary ADL decline: no decline vs any decline
+    adl_any_decline_calc = dplyr::case_when(
+      is.na(adl_total_calc) ~ NA_character_,
+      adl_total_calc == 0 ~ "no_decline",
+      adl_total_calc > 0 ~ "any_decline"
+    ),
+    adl_any_decline_calc = factor(
+      adl_any_decline_calc,
+      levels = c("no_decline", "any_decline")
+    ),
+    
+    # Current ADL burden count, where 0 = no current burden
+    adl_b_now_excess = adl_b_sum_now - 1,
+    
+    # Binary current ADL burden: no current burden vs any current burden
+    adl_any_current_burden = dplyr::case_when(
+      is.na(adl_b_now_excess) ~ NA_character_,
+      adl_b_now_excess == 0 ~ "no_current_burden",
+      adl_b_now_excess > 0 ~ "any_current_burden"
+    ),
+    adl_any_current_burden = factor(
+      adl_any_current_burden,
+      levels = c("no_current_burden", "any_current_burden")
+    )
+  )
+
+# ------------------------------------------------------------
+# 0b. Create 3-level ADL decline severity outcome
+#     0 = no decline
+#     1 = lower decline among decliners
+#     2 = greater decline among decliners
+# ------------------------------------------------------------
+
+positive_median_adl_calc <- median(
+  adl_work$adl_total_calc[adl_work$adl_total_calc > 0],
+  na.rm = TRUE
+)
+
+positive_median_adl_calc
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    adl_decline_severity_3cat_calc = dplyr::case_when(
+      is.na(adl_total_calc) ~ NA_character_,
+      adl_total_calc == 0 ~ "no_decline",
+      adl_total_calc > 0 & adl_total_calc <= positive_median_adl_calc ~ "lower_decline",
+      adl_total_calc > positive_median_adl_calc ~ "greater_decline"
+    ),
+    adl_decline_severity_3cat_calc = factor(
+      adl_decline_severity_3cat_calc,
+      levels = c("no_decline", "lower_decline", "greater_decline"),
+      ordered = TRUE
+    )
+  )
+
+# Check outcome distributions
+table(adl_work$adl_any_decline_calc, useNA = "ifany")
+table(adl_work$adl_decline_severity_3cat_calc, useNA = "ifany")
+table(adl_work$adl_any_current_burden, useNA = "ifany")
+table(adl_work$adl_b_now_excess, useNA = "ifany")
+
+# ============================================================
+# MODEL 1 OUTCOME: Binary ADL decline yes/no
+# ============================================================
+
+# Model 0: Cannabis only
+m1_adl_decline_binary_0 <- glm(
+  adl_any_decline_calc ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# Model 1: Core-adjusted
+m1_adl_decline_binary_core <- glm(
+  adl_any_decline_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# Model 2: Disease-severity-adjusted
+m1_adl_decline_binary_disease <- glm(
+  adl_any_decline_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# Extract odds ratios
+m1_results <- dplyr::bind_rows(
+  broom::tidy(m1_adl_decline_binary_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  
+  broom::tidy(m1_adl_decline_binary_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  
+  broom::tidy(m1_adl_decline_binary_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m1_results
+
+emm_m1 <- emmeans::emmeans(
+  m1_adl_decline_binary_disease,
+  ~ du_mar4_12m_aBin_ord,
+  type = "response"
+)
+
+emm_m1
+pairs(emm_m1)
+
+# ============================================================
+# MODEL 2 OUTCOME: 3-level ADL decline severity
+# no decline / lower decline / greater decline
+# ============================================================
+
+# Model 0: Cannabis only
+m2_adl_decline_severity_0 <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  Hess = TRUE
+)
+
+# Model 1: Core-adjusted
+m2_adl_decline_severity_core <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+# Model 2: Disease-severity-adjusted
+m2_adl_decline_severity_disease <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  Hess = TRUE
+)
+
+# Extract proportional odds ratios
+m2_results <- dplyr::bind_rows(
+  broom::tidy(m2_adl_decline_severity_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  
+  broom::tidy(m2_adl_decline_severity_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  
+  broom::tidy(m2_adl_decline_severity_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m2_results
+
+emm_m2 <- emmeans::emmeans(
+  m2_adl_decline_severity_disease,
+  ~ du_mar4_12m_aBin_ord,
+  mode = "prob"
+)
+
+emm_m2
+
+# Optional: Brant test if package is installed
+# install.packages("brant")
+library(brant)
+
+brant::brant(m2_adl_decline_severity_disease)
+
+# ============================================================
+# MODEL 3 OUTCOME: Binary current ADL burden yes/no
+# ============================================================
+
+# Model 0: Cannabis only
+m3_current_burden_binary_0 <- glm(
+  adl_any_current_burden ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# Model 1: Core-adjusted
+m3_current_burden_binary_core <- glm(
+  adl_any_current_burden ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# Model 2: Disease-severity-adjusted
+m3_current_burden_binary_disease <- glm(
+  adl_any_current_burden ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# Extract odds ratios
+m3_results <- dplyr::bind_rows(
+  broom::tidy(m3_current_burden_binary_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  
+  broom::tidy(m3_current_burden_binary_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  
+  broom::tidy(m3_current_burden_binary_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m3_results
+
+emm_m3 <- emmeans::emmeans(
+  m3_current_burden_binary_disease,
+  ~ du_mar4_12m_aBin_ord,
+  type = "response"
+)
+
+emm_m3
+pairs(emm_m3)
+
+# ============================================================
+# MODEL 4 OUTCOME: Current ADL burden count
+# Negative binomial model because outcome is overdispersed
+# ============================================================
+
+# Model 0: Cannabis only
+m4_current_burden_count_0 <- MASS::glm.nb(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+# Model 1: Core-adjusted
+m4_current_burden_count_core <- MASS::glm.nb(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+# Model 2: Disease-severity-adjusted
+m4_current_burden_count_disease <- MASS::glm.nb(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work
+)
+
+# Extract incidence rate ratios
+m4_results <- dplyr::bind_rows(
+  broom::tidy(m4_current_burden_count_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  
+  broom::tidy(m4_current_burden_count_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  
+  broom::tidy(m4_current_burden_count_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m4_results
+
+
+emm_m4 <- emmeans::emmeans(
+  m4_current_burden_count_disease,
+  ~ du_mar4_12m_aBin_ord,
+  type = "response"
+)
+
+emm_m4
+pairs(emm_m4)
+
+# ============================================================
+# Model analytic N table
+# ============================================================
+
+model_n_table <- tibble::tibble(
+  outcome = c(
+    "Binary ADL decline",
+    "3-level ADL decline severity",
+    "Binary current ADL burden",
+    "Current ADL burden count"
+  ),
+  model_0_n = c(
+    nobs(m1_adl_decline_binary_0),
+    nobs(m2_adl_decline_severity_0),
+    nobs(m3_current_burden_binary_0),
+    nobs(m4_current_burden_count_0)
+  ),
+  model_1_n = c(
+    nobs(m1_adl_decline_binary_core),
+    nobs(m2_adl_decline_severity_core),
+    nobs(m3_current_burden_binary_core),
+    nobs(m4_current_burden_count_core)
+  ),
+  model_2_n = c(
+    nobs(m1_adl_decline_binary_disease),
+    nobs(m2_adl_decline_severity_disease),
+    nobs(m3_current_burden_binary_disease),
+    nobs(m4_current_burden_count_disease)
+  )
+)
+
+model_n_table
+
+# ============================================================
+# Cannabis terms across all outcomes and model steps
+# ============================================================
+
+all_adl_results <- dplyr::bind_rows(
+  m1_results %>% dplyr::mutate(outcome = "Binary ADL decline"),
+  m2_results %>% dplyr::mutate(outcome = "3-level ADL decline severity"),
+  m3_results %>% dplyr::mutate(outcome = "Binary current ADL burden"),
+  m4_results %>% dplyr::mutate(outcome = "Current ADL burden count")
+) %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::select(outcome, model, term, estimate, conf.low, conf.high, p.value)
+
+all_adl_results
+
+
+tidy_polr_with_p <- function(model, model_name) {
+  broom::tidy(model, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      model = model_name
+    ) %>%
+    dplyr::select(model, term, estimate, conf.low, conf.high, statistic, p.value)
+}
+
+m2_results <- dplyr::bind_rows(
+  tidy_polr_with_p(m2_adl_decline_severity_0, "Model 0: cannabis only"),
+  tidy_polr_with_p(m2_adl_decline_severity_core, "Model 1: core adjusted"),
+  tidy_polr_with_p(m2_adl_decline_severity_disease, "Model 2: disease severity adjusted")
+)
+
+m2_results
+
+
+# ============================================================
+# Check denominator of adl_total_calc: adl_a_no
+# ============================================================
+
+summary(adl_work$adl_a_no)
+
+table(adl_work$adl_a_no, useNA = "ifany")
+
+sum(adl_work$adl_a_no == 0, na.rm = TRUE)
+sum(is.na(adl_work$adl_a_no))
+
+range(adl_work$adl_a_no, na.rm = TRUE)
+
+
+# ============================================================
+# Check whether denominator created invalid adl_total_calc values
+# ============================================================
+
+sum(is.infinite(adl_work$adl_total_calc))
+sum(is.nan(adl_work$adl_total_calc))
+sum(is.na(adl_work$adl_total_calc))
+
+adl_work %>%
+  dplyr::filter(adl_a_no == 0 | is.na(adl_a_no)) %>%
+  dplyr::select(
+    adl_a_no,
+    adl_b_sum_now,
+    adl_c_sum_best,
+    adl_total_calc
+  )
+
+adl_work %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    denominator_min = min(adl_a_no, na.rm = TRUE),
+    denominator_q1 = quantile(adl_a_no, .25, na.rm = TRUE),
+    denominator_median = median(adl_a_no, na.rm = TRUE),
+    denominator_mean = mean(adl_a_no, na.rm = TRUE),
+    denominator_q3 = quantile(adl_a_no, .75, na.rm = TRUE),
+    denominator_max = max(adl_a_no, na.rm = TRUE),
+    denominator_zero_n = sum(adl_a_no == 0, na.rm = TRUE),
+    denominator_missing_n = sum(is.na(adl_a_no))
+  )
+
+
+
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    adl_a_no_cat3 = dplyr::case_when(
+      is.na(adl_a_no) ~ NA_character_,
+      adl_a_no <= 13 ~ "lower_coverage_8_13",
+      adl_a_no %in% c(14, 15) ~ "moderate_coverage_14_15",
+      adl_a_no == 16 ~ "full_coverage_16"
+    ),
+    adl_a_no_cat3 = factor(
+      adl_a_no_cat3,
+      levels = c(
+        "lower_coverage_8_13",
+        "moderate_coverage_14_15",
+        "full_coverage_16"
+      )
+    )
+  )
+
+table(adl_work$adl_a_no_cat3, useNA = "ifany")
+
+# Denominator category by ADL decline yes/no
+table(
+  scorable_items = adl_work$adl_a_no_cat3,
+  any_decline = adl_work$adl_any_decline_calc,
+  useNA = "ifany"
+)
+
+# Denominator category by current ADL burden yes/no
+table(
+  scorable_items = adl_work$adl_a_no_cat3,
+  current_burden = adl_work$adl_any_current_burden,
+  useNA = "ifany"
+)
+
+# Mean ADL outcomes by denominator category
+adl_work %>%
+  dplyr::group_by(adl_a_no_cat3) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean_adl_total_calc = mean(adl_total_calc, na.rm = TRUE),
+    sd_adl_total_calc = sd(adl_total_calc, na.rm = TRUE),
+    median_adl_total_calc = median(adl_total_calc, na.rm = TRUE),
+    any_decline_n = sum(adl_any_decline_calc == "any_decline", na.rm = TRUE),
+    any_decline_prop = mean(adl_any_decline_calc == "any_decline", na.rm = TRUE),
+    mean_current_burden = mean(adl_b_now_excess, na.rm = TRUE),
+    sd_current_burden = sd(adl_b_now_excess, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+adl_work %>%
+  dplyr::group_by(du_mar4_12m_aBin_ord) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean_adl_a_no = mean(adl_a_no, na.rm = TRUE),
+    sd_adl_a_no = sd(adl_a_no, na.rm = TRUE),
+    median_adl_a_no = median(adl_a_no, na.rm = TRUE),
+    min_adl_a_no = min(adl_a_no, na.rm = TRUE),
+    max_adl_a_no = max(adl_a_no, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+table(
+  cannabis = adl_work$du_mar4_12m_aBin_ord,
+  adl_a_no_cat3 = adl_work$adl_a_no_cat3,
+  useNA = "ifany"
+)
+
+
+library(lmtest)
+library(sandwich)
+library(broom)
+
+m_adl_a_no_0 <- lm(
+  adl_a_no ~ du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_adl_a_no_core <- lm(
+  adl_a_no ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+m_adl_a_no_disease <- lm(
+  adl_a_no ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work
+)
+
+tidy_hc3 <- function(model, model_name) {
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  as.data.frame(as.matrix(hc3)) %>%
+    tibble::rownames_to_column("term") %>%
+    dplyr::rename(
+      estimate = Estimate,
+      std_error_hc3 = `Std. Error`,
+      statistic = `t value`,
+      p.value = `Pr(>|t|)`
+    ) %>%
+    dplyr::mutate(model = model_name) %>%
+    dplyr::select(model, term, estimate, std_error_hc3, statistic, p.value)
+}
+
+adl_a_no_results <- dplyr::bind_rows(
+  tidy_hc3(m_adl_a_no_0, "Model 0: cannabis only"),
+  tidy_hc3(m_adl_a_no_core, "Model 1: core adjusted"),
+  tidy_hc3(m_adl_a_no_disease, "Model 2: disease severity adjusted")
+)
+
+adl_a_no_results
+
+
+dplyr::rename(
+  estimate = Estimate,
+  std_error_hc3 = `Std. Error`,
+  statistic = `t value`,
+  p.value = `Pr(>|t|)`
+)
+
+# If you are stuck at Browse[1]>, type:
+Q
+
+# Then rerun this:
+tidy_hc3 <- function(model, model_name) {
+  
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  hc3_df <- as.data.frame(as.matrix(hc3))
+  
+  # Rename by position instead of relying on exact column names
+  names(hc3_df) <- c(
+    "estimate",
+    "std_error_hc3",
+    "statistic",
+    "p.value"
+  )
+  
+  hc3_df %>%
+    tibble::rownames_to_column("term") %>%
+    dplyr::mutate(model = model_name) %>%
+    dplyr::select(model, term, estimate, std_error_hc3, statistic, p.value)
+}
+
+adl_a_no_results <- dplyr::bind_rows(
+  tidy_hc3(m_adl_a_no_0, "Model 0: cannabis only"),
+  tidy_hc3(m_adl_a_no_core, "Model 1: core adjusted"),
+  tidy_hc3(m_adl_a_no_disease, "Model 2: disease severity adjusted")
+)
+
+adl_a_no_results
+
+
+tidy_hc3 <- function(model, model_name) {
+  
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  hc3_df <- as.data.frame(as.matrix(hc3))
+  
+  # Rename by position, not by exact column names
+  names(hc3_df) <- c(
+    "estimate",
+    "std_error_hc3",
+    "statistic",
+    "p.value"
+  )
+  
+  hc3_df %>%
+    tibble::rownames_to_column("term") %>%
+    dplyr::mutate(model = model_name) %>%
+    dplyr::select(
+      model,
+      term,
+      estimate,
+      std_error_hc3,
+      statistic,
+      p.value
+    )
+}
+
+adl_a_no_results <- dplyr::bind_rows(
+  tidy_hc3(m_adl_a_no_0, "Model 0: cannabis only"),
+  tidy_hc3(m_adl_a_no_core, "Model 1: core adjusted"),
+  tidy_hc3(m_adl_a_no_disease, "Model 2: disease severity adjusted")
+)
+
+adl_a_no_results
+
+dplyr::rename(
+  estimate = Estimate,
+  std_error_hc3 = `Std. Error`,
+  statistic = `t value`,
+  p.value = `Pr(>|t|)`
+)
+
+tidy_hc3 <- function(model, model_name) {
+  
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  hc3_df <- as.data.frame(as.matrix(hc3))
+  
+  names(hc3_df) <- c(
+    "estimate",
+    "std_error_hc3",
+    "statistic",
+    "p.value"
+  )
+  
+  hc3_df %>%
+    tibble::rownames_to_column("term") %>%
+    dplyr::mutate(model = model_name) %>%
+    dplyr::select(model, term, estimate, std_error_hc3, statistic, p.value)
+}
+
+adl_a_no_results <- dplyr::bind_rows(
+  tidy_hc3(m_adl_a_no_0, "Model 0: cannabis only"),
+  tidy_hc3(m_adl_a_no_core, "Model 1: core adjusted"),
+  tidy_hc3(m_adl_a_no_disease, "Model 2: disease severity adjusted")
+)
+
+adl_a_no_results
+
+adl_a_no_results <- dplyr::bind_rows(
+  tidy_hc3(m_adl_a_no_0, "Model 0: cannabis only"),
+  tidy_hc3(m_adl_a_no_core, "Model 1: core adjusted"),
+  tidy_hc3(m_adl_a_no_disease, "Model 2: disease severity adjusted")
+)
+
+adl_a_no_results
+
+tidy_lm_hc3 <- function(model, model_name) {
+  broom::tidy(
+    model,
+    conf.int = TRUE,
+    vcov = sandwich::vcovHC(model, type = "HC3")
+  ) %>%
+    dplyr::mutate(model = model_name) %>%
+    dplyr::select(model, dplyr::everything())
+}
+
+# ============================================================
+# Functional/adherence outcome diagnostics
+# mmt_ts, mac_tmr4, mac_misr
+# ============================================================
+
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(lmtest)
+library(sandwich)
+library(MASS)
+library(emmeans)
+
+func_vars <- c("mmt_ts", "mac_tmr4", "mac_misr")
+
+# Missingness
+sapply(adl_work[func_vars], function(x) sum(is.na(x)))
+
+# Basic summaries
+adl_work %>%
+  dplyr::summarise(
+    across(
+      all_of(func_vars),
+      list(
+        n_nonmissing = ~sum(!is.na(.x)),
+        missing = ~sum(is.na(.x)),
+        min = ~min(.x, na.rm = TRUE),
+        q1 = ~quantile(.x, .25, na.rm = TRUE),
+        median = ~median(.x, na.rm = TRUE),
+        mean = ~mean(.x, na.rm = TRUE),
+        q3 = ~quantile(.x, .75, na.rm = TRUE),
+        max = ~max(.x, na.rm = TRUE),
+        sd = ~sd(.x, na.rm = TRUE),
+        zero_n = ~sum(.x == 0, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    )
+  )
+
+# Frequency tables if variables are discrete/integer-like
+table(adl_work$mmt_ts, useNA = "ifany")
+table(adl_work$mac_tmr4, useNA = "ifany")
+table(adl_work$mac_misr, useNA = "ifany")
+
+# Distribution plots
+ggplot(adl_work, aes(x = mmt_ts)) +
+  geom_histogram(bins = 20) +
+  theme_classic() +
+  labs(x = "MMT-R total score", y = "Count")
+
+ggplot(adl_work, aes(x = mac_tmr4)) +
+  geom_histogram(bins = 10) +
+  theme_classic() +
+  labs(x = "Morisky-4 total", y = "Count")
+
+ggplot(adl_work, aes(x = mac_misr)) +
+  geom_histogram(bins = 20) +
+  theme_classic() +
+  labs(x = "Missed-dose ratio", y = "Count")
+
+# ============================================================
+# Descriptives by cannabis group
+# ============================================================
+
+adl_work %>%
+  dplyr::group_by(du_mar4_12m_aBin_ord) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    
+    mmt_ts_n = sum(!is.na(mmt_ts)),
+    mmt_ts_mean = mean(mmt_ts, na.rm = TRUE),
+    mmt_ts_sd = sd(mmt_ts, na.rm = TRUE),
+    mmt_ts_median = median(mmt_ts, na.rm = TRUE),
+    mmt_ts_min = min(mmt_ts, na.rm = TRUE),
+    mmt_ts_max = max(mmt_ts, na.rm = TRUE),
+    
+    mac_tmr4_n = sum(!is.na(mac_tmr4)),
+    mac_tmr4_mean = mean(mac_tmr4, na.rm = TRUE),
+    mac_tmr4_sd = sd(mac_tmr4, na.rm = TRUE),
+    mac_tmr4_median = median(mac_tmr4, na.rm = TRUE),
+    mac_tmr4_min = min(mac_tmr4, na.rm = TRUE),
+    mac_tmr4_max = max(mac_tmr4, na.rm = TRUE),
+    
+    mac_misr_n = sum(!is.na(mac_misr)),
+    mac_misr_mean = mean(mac_misr, na.rm = TRUE),
+    mac_misr_sd = sd(mac_misr, na.rm = TRUE),
+    mac_misr_median = median(mac_misr, na.rm = TRUE),
+    mac_misr_min = min(mac_misr, na.rm = TRUE),
+    mac_misr_max = max(mac_misr, na.rm = TRUE),
+    
+    .groups = "drop"
+  )
+
+# ============================================================
+# HC3 helper
+# ============================================================
+
+tidy_hc3 <- function(model, model_name, outcome_name) {
+  
+  hc3 <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  hc3_df <- as.data.frame(as.matrix(hc3))
+  
+  names(hc3_df) <- c(
+    "estimate",
+    "std_error_hc3",
+    "statistic",
+    "p.value"
+  )
+  
+  hc3_df %>%
+    tibble::rownames_to_column("term") %>%
+    dplyr::mutate(
+      model = model_name,
+      outcome = outcome_name
+    ) %>%
+    dplyr::select(
+      outcome,
+      model,
+      term,
+      estimate,
+      std_error_hc3,
+      statistic,
+      p.value
+    )
+}
+
+# ============================================================
+# Outcome A: mmt_ts
+# Medication-management performance
+# ============================================================
+
+m_mmt_step1_disease <- lm(
+  mmt_ts ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_mmt_step2_disease_cannabis <- lm(
+  mmt_ts ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_mmt_step3_full <- lm(
+  mmt_ts ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+mmt_results_hc3 <- dplyr::bind_rows(
+  tidy_hc3(m_mmt_step1_disease, "Step 1: disease severity only", "MMT-R total"),
+  tidy_hc3(m_mmt_step2_disease_cannabis, "Step 2: disease severity + cannabis", "MMT-R total"),
+  tidy_hc3(m_mmt_step3_full, "Step 3: disease severity + cannabis + covariates", "MMT-R total")
+)
+
+mmt_results_hc3
+
+anova(
+  m_mmt_step1_disease,
+  m_mmt_step2_disease_cannabis,
+  m_mmt_step3_full
+)
+
+AIC(
+  m_mmt_step1_disease,
+  m_mmt_step2_disease_cannabis,
+  m_mmt_step3_full
+)
+
+emmeans::emmeans(
+  m_mmt_step3_full,
+  ~ du_mar4_12m_aBin_ord
+)
+
+pairs(
+  emmeans::emmeans(
+    m_mmt_step3_full,
+    ~ du_mar4_12m_aBin_ord
+  )
+)
+
+# ============================================================
+# Outcome B: mac_tmr4
+# Morisky-4 total
+# ============================================================
+
+m_morisky_step1_disease <- lm(
+  mac_tmr4 ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_morisky_step2_disease_cannabis <- lm(
+  mac_tmr4 ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_morisky_step3_full <- lm(
+  mac_tmr4 ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+morisky_results_hc3 <- dplyr::bind_rows(
+  tidy_hc3(m_morisky_step1_disease, "Step 1: disease severity only", "Morisky-4 total"),
+  tidy_hc3(m_morisky_step2_disease_cannabis, "Step 2: disease severity + cannabis", "Morisky-4 total"),
+  tidy_hc3(m_morisky_step3_full, "Step 3: disease severity + cannabis + covariates", "Morisky-4 total")
+)
+
+morisky_results_hc3
+
+anova(
+  m_morisky_step1_disease,
+  m_morisky_step2_disease_cannabis,
+  m_morisky_step3_full
+)
+
+AIC(
+  m_morisky_step1_disease,
+  m_morisky_step2_disease_cannabis,
+  m_morisky_step3_full
+)
+
+
+# ============================================================
+# Optional ordinal Morisky model
+# Only use if mac_tmr4 is ordered with few categories
+# ============================================================
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    mac_tmr4_ord = factor(
+      mac_tmr4,
+      ordered = TRUE
+    )
+  )
+
+m_morisky_ord_step3_full <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+tidy_polr_with_p <- function(model, model_name, outcome_name) {
+  broom::tidy(model, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      model = model_name,
+      outcome = outcome_name
+    ) %>%
+    dplyr::select(outcome, model, term, estimate, conf.low, conf.high, statistic, p.value)
+}
+
+morisky_ord_results <- tidy_polr_with_p(
+  m_morisky_ord_step3_full,
+  "Step 3: disease severity + cannabis + covariates",
+  "Morisky-4 ordinal"
+)
+
+morisky_ord_results
+
+# ============================================================
+# Outcome C: mac_misr
+# Missed-dose ratio
+# ============================================================
+
+summary(adl_work$mac_misr)
+
+sum(adl_work$mac_misr == 0, na.rm = TRUE)
+sum(adl_work$mac_misr == 1, na.rm = TRUE)
+sum(adl_work$mac_misr > 0 & adl_work$mac_misr < 1, na.rm = TRUE)
+sum(is.na(adl_work$mac_misr))
+
+
+m_misr_step1_disease <- lm(
+  mac_misr ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_misr_step2_disease_cannabis <- lm(
+  mac_misr ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_misr_step3_full <- lm(
+  mac_misr ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+misr_results_hc3 <- dplyr::bind_rows(
+  tidy_hc3(m_misr_step1_disease, "Step 1: disease severity only", "Missed-dose ratio"),
+  tidy_hc3(m_misr_step2_disease_cannabis, "Step 2: disease severity + cannabis", "Missed-dose ratio"),
+  tidy_hc3(m_misr_step3_full, "Step 3: disease severity + cannabis + covariates", "Missed-dose ratio")
+)
+
+misr_results_hc3
+
+anova(
+  m_misr_step1_disease,
+  m_misr_step2_disease_cannabis,
+  m_misr_step3_full
+)
+
+AIC(
+  m_misr_step1_disease,
+  m_misr_step2_disease_cannabis,
+  m_misr_step3_full
+)
+
+m_misr_step1_disease <- lm(
+  mac_misr ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_misr_step2_disease_cannabis <- lm(
+  mac_misr ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_misr_step3_full <- lm(
+  mac_misr ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+misr_results_hc3 <- dplyr::bind_rows(
+  tidy_hc3(m_misr_step1_disease, "Step 1: disease severity only", "Missed-dose ratio"),
+  tidy_hc3(m_misr_step2_disease_cannabis, "Step 2: disease severity + cannabis", "Missed-dose ratio"),
+  tidy_hc3(m_misr_step3_full, "Step 3: disease severity + cannabis + covariates", "Missed-dose ratio")
+)
+
+misr_results_hc3
+
+anova(
+  m_misr_step1_disease,
+  m_misr_step2_disease_cannabis,
+  m_misr_step3_full
+)
+
+AIC(
+  m_misr_step1_disease,
+  m_misr_step2_disease_cannabis,
+  m_misr_step3_full
+)
+
+
+# ============================================================
+# MMT-R TOTAL: Secondary functional-capacity outcome
+# Outcome: mmt_ts
+# Model: Linear regression with HC3 robust SEs
+# Sequence: disease severity -> cannabis -> covariates
+# ============================================================
+
+library(dplyr)
+library(lmtest)
+library(sandwich)
+library(broom)
+library(emmeans)
+
+# ------------------------------------------------------------
+# Distribution diagnostics
+# ------------------------------------------------------------
+
+summary(adl_work$mmt_ts)
+table(adl_work$mmt_ts, useNA = "ifany")
+sum(is.na(adl_work$mmt_ts))
+
+adl_work %>%
+  dplyr::group_by(du_mar4_12m_aBin_ord) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mmt_n = sum(!is.na(mmt_ts)),
+    mmt_mean = mean(mmt_ts, na.rm = TRUE),
+    mmt_sd = sd(mmt_ts, na.rm = TRUE),
+    mmt_median = median(mmt_ts, na.rm = TRUE),
+    mmt_min = min(mmt_ts, na.rm = TRUE),
+    mmt_max = max(mmt_ts, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ------------------------------------------------------------
+# Stepwise/sequential models
+# ------------------------------------------------------------
+
+m_mmt_step1_disease <- lm(
+  mmt_ts ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_mmt_step2_disease_cannabis <- lm(
+  mmt_ts ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_mmt_step3_full <- lm(
+  mmt_ts ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+# ------------------------------------------------------------
+# HC3 robust helper
+# ------------------------------------------------------------
+
+tidy_hc3 <- function(model, model_name, outcome_name) {
+  
+  hc3_mat <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  hc3_mat <- as.matrix(hc3_mat)
+  
+  hc3_df <- data.frame(
+    term = rownames(hc3_mat),
+    estimate = hc3_mat[, 1],
+    std_error_hc3 = hc3_mat[, 2],
+    statistic = hc3_mat[, 3],
+    p.value = hc3_mat[, 4],
+    row.names = NULL
+  )
+  
+  hc3_df %>%
+    dplyr::mutate(
+      outcome = outcome_name,
+      model = model_name
+    ) %>%
+    dplyr::select(
+      outcome,
+      model,
+      term,
+      estimate,
+      std_error_hc3,
+      statistic,
+      p.value
+    )
+}
+
+mmt_results_hc3 <- dplyr::bind_rows(
+  tidy_hc3(
+    m_mmt_step1_disease,
+    "Step 1: disease severity only",
+    "MMT-R total"
+  ),
+  tidy_hc3(
+    m_mmt_step2_disease_cannabis,
+    "Step 2: disease severity + cannabis",
+    "MMT-R total"
+  ),
+  tidy_hc3(
+    m_mmt_step3_full,
+    "Step 3: disease severity + cannabis + covariates",
+    "MMT-R total"
+  )
+)
+
+mmt_results_hc3
+
+# Model comparison
+anova(
+  m_mmt_step1_disease,
+  m_mmt_step2_disease_cannabis,
+  m_mmt_step3_full
+)
+
+AIC(
+  m_mmt_step1_disease,
+  m_mmt_step2_disease_cannabis,
+  m_mmt_step3_full
+)
+
+# Analytic N
+nobs(m_mmt_step1_disease)
+nobs(m_mmt_step2_disease_cannabis)
+nobs(m_mmt_step3_full)
+
+# Adjusted means by cannabis group
+mmt_emmeans <- emmeans::emmeans(
+  m_mmt_step3_full,
+  ~ du_mar4_12m_aBin_ord
+)
+
+mmt_emmeans
+
+pairs(mmt_emmeans)
+
+# ============================================================
+# MORISKY-4 TOTAL: Exploratory adherence/nonadherence outcome
+# Outcome: mac_tmr4
+# Model: Ordinal logistic regression
+# Sequence: disease severity -> cannabis -> covariates
+# ============================================================
+
+library(MASS)
+library(dplyr)
+library(broom)
+library(emmeans)
+
+# ------------------------------------------------------------
+# Distribution diagnostics
+# ------------------------------------------------------------
+
+summary(adl_work$mac_tmr4)
+table(adl_work$mac_tmr4, useNA = "ifany")
+sum(is.na(adl_work$mac_tmr4))
+
+adl_work %>%
+  dplyr::group_by(du_mar4_12m_aBin_ord) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    morisky_n = sum(!is.na(mac_tmr4)),
+    morisky_mean = mean(mac_tmr4, na.rm = TRUE),
+    morisky_sd = sd(mac_tmr4, na.rm = TRUE),
+    morisky_median = median(mac_tmr4, na.rm = TRUE),
+    morisky_min = min(mac_tmr4, na.rm = TRUE),
+    morisky_max = max(mac_tmr4, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    mac_tmr4_ord = factor(
+      mac_tmr4,
+      ordered = TRUE
+    )
+  )
+
+table(adl_work$mac_tmr4_ord, useNA = "ifany")
+
+# ------------------------------------------------------------
+# Stepwise/sequential ordinal logistic models
+# ------------------------------------------------------------
+
+m_morisky_step1_disease <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m_morisky_step2_disease_cannabis <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m_morisky_step3_full <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+tidy_polr_with_p <- function(model, model_name, outcome_name) {
+  
+  broom::tidy(
+    model,
+    conf.int = TRUE,
+    exponentiate = TRUE
+  ) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      outcome = outcome_name,
+      model = model_name
+    ) %>%
+    dplyr::select(
+      outcome,
+      model,
+      term,
+      estimate,
+      conf.low,
+      conf.high,
+      statistic,
+      p.value
+    )
+}
+
+morisky_results_ord <- dplyr::bind_rows(
+  tidy_polr_with_p(
+    m_morisky_step1_disease,
+    "Step 1: disease severity only",
+    "Morisky-4 total"
+  ),
+  tidy_polr_with_p(
+    m_morisky_step2_disease_cannabis,
+    "Step 2: disease severity + cannabis",
+    "Morisky-4 total"
+  ),
+  tidy_polr_with_p(
+    m_morisky_step3_full,
+    "Step 3: disease severity + cannabis + covariates",
+    "Morisky-4 total"
+  )
+) %>%
+  # remove threshold/cutpoint rows
+  dplyr::filter(
+    !grepl("\\|", term)
+  )
+
+morisky_results_ord
+
+# Model comparison
+anova(
+  m_morisky_step1_disease,
+  m_morisky_step2_disease_cannabis,
+  m_morisky_step3_full
+)
+
+AIC(
+  m_morisky_step1_disease,
+  m_morisky_step2_disease_cannabis,
+  m_morisky_step3_full
+)
+
+# Analytic N
+nobs(m_morisky_step1_disease)
+nobs(m_morisky_step2_disease_cannabis)
+nobs(m_morisky_step3_full)
+
+# Adjusted predicted probabilities by cannabis group
+morisky_probs <- emmeans::emmeans(
+  m_morisky_step3_full,
+  ~ du_mar4_12m_aBin_ord | mac_tmr4_ord,
+  mode = "prob"
+)
+
+morisky_probs
+
+
+# ============================================================
+# Combined functional/adherence results
+# ============================================================
+
+functional_extension_results <- dplyr::bind_rows(
+  mmt_results_hc3 %>%
+    dplyr::mutate(
+      estimate_type = "Linear estimate"
+    ),
+  
+  morisky_results_ord %>%
+    dplyr::mutate(
+      estimate_type = "Proportional odds ratio"
+    )
+) %>%
+  dplyr::filter(
+    grepl("DiseaseSev_c|du_mar4_12m_aBin_ord|phq_2_age_c|bdi_total|sex_covfac", term)
+  ) %>%
+  dplyr::select(
+    outcome,
+    estimate_type,
+    model,
+    term,
+    estimate,
+    dplyr::any_of(c("std_error_hc3", "conf.low", "conf.high")),
+    statistic,
+    p.value
+  )
+
+functional_extension_results
+
+functional_extension_n_table <- tibble::tibble(
+  outcome = c(
+    "MMT-R total",
+    "Morisky-4 total"
+  ),
+  step1_disease_n = c(
+    nobs(m_mmt_step1_disease),
+    nobs(m_morisky_step1_disease)
+  ),
+  step2_disease_cannabis_n = c(
+    nobs(m_mmt_step2_disease_cannabis),
+    nobs(m_morisky_step2_disease_cannabis)
+  ),
+  step3_full_n = c(
+    nobs(m_mmt_step3_full),
+    nobs(m_morisky_step3_full)
+  )
+)
+
+functional_extension_n_table
+
+# ============================================================
+# Identify global/domain neurocognitive score variables
+# ============================================================
+
+names(adl_work)[
+  grepl(
+    "global|learn|memory|exec|motor|speed|attention|domain|neuro|cog",
+    names(adl_work),
+    ignore.case = TRUE
+  )
+]
+
+neurocog_vars <- c(
+  "global_z",
+  "learning_z",
+  "memory_z",
+  "executive_z",
+  "motor_z",
+  "processing_speed_z"
+)
+
+functional_vars <- c(
+  "adl_total_calc",
+  "adl_b_now_excess",
+  "mmt_ts",
+  "mac_tmr4"
+)
+
+# ============================================================
+# Correlations: functional/adherence outcomes with neurocognition
+# ============================================================
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(broom)
+
+# Neurocognitive variables from candidacy-style domain/global scores
+neurocog_vars <- c(
+  "global_z",
+  "learning_z",
+  "memory_z",
+  "executive_z",
+  "motor_z",
+  "processing_speed_z"
+)
+
+# Functional/adherence outcomes
+functional_vars <- c(
+  "adl_total_calc",     # proportional ADL decline score
+  "adl_b_now_excess",   # current ADL burden count
+  "mmt_ts",             # MMT-R medication-management performance
+  "mac_tmr4"            # Morisky-4 adherence/nonadherence total
+)
+
+# Check that all variables exist
+setdiff(neurocog_vars, names(adl_work))
+setdiff(functional_vars, names(adl_work))
+
+# ============================================================
+# Spearman correlations
+# ============================================================
+
+func_neuro_spearman <- tidyr::expand_grid(
+  functional_outcome = functional_vars,
+  neurocog_score = neurocog_vars
+) %>%
+  dplyr::mutate(
+    test = purrr::map2(
+      functional_outcome,
+      neurocog_score,
+      ~ cor.test(
+        adl_work[[.x]],
+        adl_work[[.y]],
+        method = "spearman",
+        exact = FALSE,
+        use = "pairwise.complete.obs"
+      )
+    ),
+    rho = purrr::map_dbl(test, ~ unname(.x$estimate)),
+    p.value = purrr::map_dbl(test, ~ .x$p.value),
+    n = purrr::map2_int(
+      functional_outcome,
+      neurocog_score,
+      ~ sum(complete.cases(adl_work[, c(.x, .y)]))
+    )
+  ) %>%
+  dplyr::select(
+    functional_outcome,
+    neurocog_score,
+    n,
+    rho,
+    p.value
+  ) %>%
+  dplyr::mutate(
+    p_fdr = p.adjust(p.value, method = "BH")
+  ) %>%
+  dplyr::arrange(functional_outcome, p.value)
+
+func_neuro_spearman
+
+# ============================================================
+# Wide rho matrix
+# ============================================================
+
+func_neuro_rho_matrix <- func_neuro_spearman %>%
+  dplyr::select(functional_outcome, neurocog_score, rho) %>%
+  tidyr::pivot_wider(
+    names_from = neurocog_score,
+    values_from = rho
+  )
+
+func_neuro_rho_matrix
+
+# ============================================================
+# Wide p-value matrix
+# ============================================================
+
+func_neuro_p_matrix <- func_neuro_spearman %>%
+  dplyr::select(functional_outcome, neurocog_score, p.value) %>%
+  tidyr::pivot_wider(
+    names_from = neurocog_score,
+    values_from = p.value
+  )
+
+func_neuro_p_matrix
+
+# ============================================================
+# Formatted correlation table
+# ============================================================
+
+func_neuro_corr_table <- func_neuro_spearman %>%
+  dplyr::mutate(
+    rho_fmt = sprintf("%.2f", rho),
+    p_fmt = dplyr::case_when(
+      p.value < .001 ~ "< .001",
+      TRUE ~ sprintf("%.3f", p.value)
+    ),
+    p_fdr_fmt = dplyr::case_when(
+      p_fdr < .001 ~ "< .001",
+      TRUE ~ sprintf("%.3f", p_fdr)
+    ),
+    result = paste0(
+      "rho = ", rho_fmt,
+      ", p = ", p_fmt,
+      ", FDR p = ", p_fdr_fmt
+    )
+  ) %>%
+  dplyr::select(
+    functional_outcome,
+    neurocog_score,
+    n,
+    result
+  ) %>%
+  dplyr::arrange(functional_outcome, neurocog_score)
+
+func_neuro_corr_table
+
+# ============================================================
+# Optional heatmap
+# ============================================================
+
+library(ggplot2)
+
+ggplot(
+  func_neuro_spearman,
+  aes(
+    x = neurocog_score,
+    y = functional_outcome,
+    fill = rho
+  )
+) +
+  geom_tile(color = "white") +
+  geom_text(
+    aes(label = sprintf("%.2f", rho)),
+    size = 3
+  ) +
+  scale_fill_gradient2(
+    limits = c(-1, 1),
+    midpoint = 0
+  ) +
+  labs(
+    x = "Neurocognitive score",
+    y = "Functional/adherence outcome",
+    fill = "Spearman rho"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+
+
+# ============================================================
+# Packages
+# ============================================================
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(broom)
+library(lmtest)
+library(sandwich)
+library(MASS)
+library(emmeans)
+library(ggplot2)
+
+# ============================================================
+# Helper: HC3 robust results for linear models
+# ============================================================
+
+tidy_hc3 <- function(model, model_name, outcome_name) {
+  
+  hc3_mat <- lmtest::coeftest(
+    model,
+    vcov. = sandwich::vcovHC(model, type = "HC3")
+  )
+  
+  hc3_mat <- as.matrix(hc3_mat)
+  
+  hc3_df <- data.frame(
+    term = rownames(hc3_mat),
+    estimate = hc3_mat[, 1],
+    std_error_hc3 = hc3_mat[, 2],
+    statistic = hc3_mat[, 3],
+    p.value = hc3_mat[, 4],
+    row.names = NULL
+  )
+  
+  hc3_df %>%
+    dplyr::mutate(
+      outcome = outcome_name,
+      model = model_name
+    ) %>%
+    dplyr::select(
+      outcome,
+      model,
+      term,
+      estimate,
+      std_error_hc3,
+      statistic,
+      p.value
+    )
+}
+
+# ============================================================
+# Helper: ordinal logistic results with p-values
+# ============================================================
+
+tidy_polr_with_p <- function(model, model_name, outcome_name) {
+  
+  broom::tidy(
+    model,
+    conf.int = TRUE,
+    exponentiate = TRUE
+  ) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      outcome = outcome_name,
+      model = model_name
+    ) %>%
+    dplyr::select(
+      outcome,
+      model,
+      term,
+      estimate,
+      conf.low,
+      conf.high,
+      statistic,
+      p.value
+    )
+}
+
+# ============================================================
+# Helper: standard GLM/NB results
+# ============================================================
+
+tidy_exp <- function(model, model_name, outcome_name, estimate_type_name) {
+  
+  broom::tidy(
+    model,
+    conf.int = TRUE,
+    exponentiate = TRUE
+  ) %>%
+    dplyr::mutate(
+      outcome = outcome_name,
+      model = model_name,
+      estimate_type = estimate_type_name
+    ) %>%
+    dplyr::select(
+      outcome,
+      estimate_type,
+      model,
+      term,
+      estimate,
+      conf.low,
+      conf.high,
+      statistic,
+      p.value
+    )
+}
+
+# ============================================================
+# Outcome construction / distribution table
+# ============================================================
+
+outcome_distribution_table <- tibble::tibble(
+  construct = c(
+    "ADL decline from best functioning",
+    "Current ADL burden",
+    "Current ADL burden severity",
+    "Medication-management capacity",
+    "Adherence behavior"
+  ),
+  outcome = c(
+    "Any ADL decline",
+    "Any current ADL burden",
+    "Current ADL burden count",
+    "MMT-R total",
+    "Morisky-4 total"
+  ),
+  variable = c(
+    "adl_any_decline_calc",
+    "adl_any_current_burden",
+    "adl_b_now_excess",
+    "mmt_ts",
+    "mac_tmr4"
+  ),
+  coding_or_scale = c(
+    "0 = no decline; 1 = any decline",
+    "0 = no current burden; 1 = any current burden",
+    "Count of current ADL burden",
+    "Continuous performance score; higher = better medication-management performance",
+    "Ordinal self-reported adherence/nonadherence score"
+  ),
+  model_type = c(
+    "Logistic regression",
+    "Logistic regression",
+    "Negative binomial regression",
+    "Linear regression with HC3 robust SEs",
+    "Ordinal logistic regression"
+  ),
+  analytic_role = c(
+    "Primary functional decline outcome",
+    "Secondary current-functioning outcome",
+    "Secondary current-burden severity outcome",
+    "Secondary performance-based functional-capacity outcome",
+    "Exploratory adherence/nonadherence outcome"
+  )
+)
+
+outcome_distribution_table
+
+# ============================================================
+# Observed outcome distributions
+# ============================================================
+
+table(adl_work$adl_any_decline_calc, useNA = "ifany")
+table(adl_work$adl_any_current_burden, useNA = "ifany")
+summary(adl_work$adl_b_now_excess)
+summary(adl_work$mmt_ts)
+table(adl_work$mac_tmr4, useNA = "ifany")
+
+outcome_summary_table <- tibble::tibble(
+  outcome = c(
+    "Any ADL decline",
+    "Any current ADL burden",
+    "Current ADL burden count",
+    "MMT-R total",
+    "Morisky-4 total"
+  ),
+  n = c(
+    sum(!is.na(adl_work$adl_any_decline_calc)),
+    sum(!is.na(adl_work$adl_any_current_burden)),
+    sum(!is.na(adl_work$adl_b_now_excess)),
+    sum(!is.na(adl_work$mmt_ts)),
+    sum(!is.na(adl_work$mac_tmr4))
+  ),
+  distribution = c(
+    paste0(
+      "No decline = ",
+      sum(adl_work$adl_any_decline_calc == "no_decline", na.rm = TRUE),
+      "; any decline = ",
+      sum(adl_work$adl_any_decline_calc == "any_decline", na.rm = TRUE)
+    ),
+    paste0(
+      "No current burden = ",
+      sum(adl_work$adl_any_current_burden == "no_current_burden", na.rm = TRUE),
+      "; any current burden = ",
+      sum(adl_work$adl_any_current_burden == "any_current_burden", na.rm = TRUE)
+    ),
+    paste0(
+      "Mean = ",
+      round(mean(adl_work$adl_b_now_excess, na.rm = TRUE), 2),
+      "; SD = ",
+      round(sd(adl_work$adl_b_now_excess, na.rm = TRUE), 2),
+      "; range = ",
+      min(adl_work$adl_b_now_excess, na.rm = TRUE),
+      "-",
+      max(adl_work$adl_b_now_excess, na.rm = TRUE)
+    ),
+    paste0(
+      "Mean = ",
+      round(mean(adl_work$mmt_ts, na.rm = TRUE), 2),
+      "; SD = ",
+      round(sd(adl_work$mmt_ts, na.rm = TRUE), 2),
+      "; range = ",
+      min(adl_work$mmt_ts, na.rm = TRUE),
+      "-",
+      max(adl_work$mmt_ts, na.rm = TRUE)
+    ),
+    paste0(
+      paste(names(table(adl_work$mac_tmr4)), table(adl_work$mac_tmr4), sep = " = "),
+      collapse = "; "
+    )
+  )
+)
+
+outcome_summary_table
+
+# ============================================================
+# Final model 1: Any ADL decline
+# ============================================================
+
+m_adl_decline_final <- glm(
+  adl_any_decline_calc ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# ============================================================
+# Final model 2: Any current ADL burden
+# ============================================================
+
+m_current_burden_binary_final <- glm(
+  adl_any_current_burden ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+# ============================================================
+# Final model 3: Current ADL burden count
+# ============================================================
+
+m_current_burden_count_final <- MASS::glm.nb(
+  adl_b_now_excess ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+# ============================================================
+# Final model 4: MMT-R total
+# ============================================================
+
+m_mmt_final <- lm(
+  mmt_ts ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+# ============================================================
+# Final model 5: Morisky-4 total
+# ============================================================
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    mac_tmr4_ord = factor(
+      mac_tmr4,
+      ordered = TRUE
+    )
+  )
+
+m_morisky_final <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+# ============================================================
+# Final adjusted model table
+# ============================================================
+
+final_model_results <- dplyr::bind_rows(
+  
+  tidy_exp(
+    m_adl_decline_final,
+    "Final adjusted model",
+    "Any ADL decline",
+    "Odds ratio"
+  ),
+  
+  tidy_exp(
+    m_current_burden_binary_final,
+    "Final adjusted model",
+    "Any current ADL burden",
+    "Odds ratio"
+  ),
+  
+  tidy_exp(
+    m_current_burden_count_final,
+    "Final adjusted model",
+    "Current ADL burden count",
+    "Incidence rate ratio"
+  ),
+  
+  tidy_hc3(
+    m_mmt_final,
+    "Final adjusted model",
+    "MMT-R total"
+  ) %>%
+    dplyr::mutate(
+      estimate_type = "Linear estimate",
+      conf.low = NA_real_,
+      conf.high = NA_real_
+    ) %>%
+    dplyr::select(
+      outcome,
+      estimate_type,
+      model,
+      term,
+      estimate,
+      conf.low,
+      conf.high,
+      statistic,
+      p.value
+    ),
+  
+  tidy_polr_with_p(
+    m_morisky_final,
+    "Final adjusted model",
+    "Morisky-4 total"
+  ) %>%
+    dplyr::mutate(
+      estimate_type = "Proportional odds ratio"
+    ) %>%
+    dplyr::select(
+      outcome,
+      estimate_type,
+      model,
+      term,
+      estimate,
+      conf.low,
+      conf.high,
+      statistic,
+      p.value
+    )
+) %>%
+  dplyr::filter(
+    !grepl("\\|", term)
+  ) %>%
+  dplyr::filter(
+    grepl(
+      "DiseaseSev_c|du_mar4_12m_aBin_ord|phq_2_age_c|bdi_total|sex_covfac",
+      term
+    )
+  )
+
+final_model_results
+
+# ============================================================
+# APA-ish formatted final model table
+# ============================================================
+
+final_model_results_formatted <- final_model_results %>%
+  dplyr::mutate(
+    estimate_fmt = sprintf("%.2f", estimate),
+    ci_fmt = dplyr::case_when(
+      is.na(conf.low) ~ "",
+      TRUE ~ paste0("[", sprintf("%.2f", conf.low), ", ", sprintf("%.2f", conf.high), "]")
+    ),
+    p_fmt = dplyr::case_when(
+      p.value < .001 ~ "< .001",
+      TRUE ~ sprintf("%.3f", p.value)
+    )
+  ) %>%
+  dplyr::select(
+    outcome,
+    estimate_type,
+    term,
+    estimate_fmt,
+    ci_fmt,
+    p_fmt
+  )
+
+final_model_results_formatted
+
+# ============================================================
+# Sequential models: Any ADL decline
+# ============================================================
+
+m_adl_decline_s1 <- glm(
+  adl_any_decline_calc ~ DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m_adl_decline_s2 <- glm(
+  adl_any_decline_calc ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m_adl_decline_s3 <- m_adl_decline_final
+
+# ============================================================
+# Sequential models: Any current ADL burden
+# ============================================================
+
+m_current_binary_s1 <- glm(
+  adl_any_current_burden ~ DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m_current_binary_s2 <- glm(
+  adl_any_current_burden ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m_current_binary_s3 <- m_current_burden_binary_final
+
+# ============================================================
+# Sequential models: Current ADL burden count
+# ============================================================
+
+m_current_count_s1 <- MASS::glm.nb(
+  adl_b_now_excess ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_current_count_s2 <- MASS::glm.nb(
+  adl_b_now_excess ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_current_count_s3 <- m_current_burden_count_final
+
+# ============================================================
+# Sequential models: MMT-R total
+# ============================================================
+
+m_mmt_s1 <- lm(
+  mmt_ts ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m_mmt_s2 <- lm(
+  mmt_ts ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m_mmt_s3 <- m_mmt_final
+
+# ============================================================
+# Sequential models: Morisky-4 total
+# ============================================================
+
+m_morisky_s1 <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m_morisky_s2 <- MASS::polr(
+  mac_tmr4_ord ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m_morisky_s3 <- m_morisky_final
+
+# ============================================================
+# Sequential coefficient results
+# ============================================================
+
+sequential_results <- dplyr::bind_rows(
+  
+  # ADL decline
+  tidy_exp(m_adl_decline_s1, "Step 1: disease severity only", "Any ADL decline", "Odds ratio"),
+  tidy_exp(m_adl_decline_s2, "Step 2: disease severity + cannabis", "Any ADL decline", "Odds ratio"),
+  tidy_exp(m_adl_decline_s3, "Step 3: full adjustment", "Any ADL decline", "Odds ratio"),
+  
+  # Current burden binary
+  tidy_exp(m_current_binary_s1, "Step 1: disease severity only", "Any current ADL burden", "Odds ratio"),
+  tidy_exp(m_current_binary_s2, "Step 2: disease severity + cannabis", "Any current ADL burden", "Odds ratio"),
+  tidy_exp(m_current_binary_s3, "Step 3: full adjustment", "Any current ADL burden", "Odds ratio"),
+  
+  # Current burden count
+  tidy_exp(m_current_count_s1, "Step 1: disease severity only", "Current ADL burden count", "Incidence rate ratio"),
+  tidy_exp(m_current_count_s2, "Step 2: disease severity + cannabis", "Current ADL burden count", "Incidence rate ratio"),
+  tidy_exp(m_current_count_s3, "Step 3: full adjustment", "Current ADL burden count", "Incidence rate ratio"),
+  
+  # MMT-R
+  tidy_hc3(m_mmt_s1, "Step 1: disease severity only", "MMT-R total") %>%
+    dplyr::mutate(
+      estimate_type = "Linear estimate",
+      conf.low = NA_real_,
+      conf.high = NA_real_
+    ) %>%
+    dplyr::select(outcome, estimate_type, model, term, estimate, conf.low, conf.high, statistic, p.value),
+  
+  tidy_hc3(m_mmt_s2, "Step 2: disease severity + cannabis", "MMT-R total") %>%
+    dplyr::mutate(
+      estimate_type = "Linear estimate",
+      conf.low = NA_real_,
+      conf.high = NA_real_
+    ) %>%
+    dplyr::select(outcome, estimate_type, model, term, estimate, conf.low, conf.high, statistic, p.value),
+  
+  tidy_hc3(m_mmt_s3, "Step 3: full adjustment", "MMT-R total") %>%
+    dplyr::mutate(
+      estimate_type = "Linear estimate",
+      conf.low = NA_real_,
+      conf.high = NA_real_
+    ) %>%
+    dplyr::select(outcome, estimate_type, model, term, estimate, conf.low, conf.high, statistic, p.value),
+  
+  # Morisky
+  tidy_polr_with_p(m_morisky_s1, "Step 1: disease severity only", "Morisky-4 total") %>%
+    dplyr::mutate(estimate_type = "Proportional odds ratio") %>%
+    dplyr::select(outcome, estimate_type, model, term, estimate, conf.low, conf.high, statistic, p.value),
+  
+  tidy_polr_with_p(m_morisky_s2, "Step 2: disease severity + cannabis", "Morisky-4 total") %>%
+    dplyr::mutate(estimate_type = "Proportional odds ratio") %>%
+    dplyr::select(outcome, estimate_type, model, term, estimate, conf.low, conf.high, statistic, p.value),
+  
+  tidy_polr_with_p(m_morisky_s3, "Step 3: full adjustment", "Morisky-4 total") %>%
+    dplyr::mutate(estimate_type = "Proportional odds ratio") %>%
+    dplyr::select(outcome, estimate_type, model, term, estimate, conf.low, conf.high, statistic, p.value)
+) %>%
+  dplyr::filter(!grepl("\\|", term)) %>%
+  dplyr::filter(
+    grepl("DiseaseSev_c|du_mar4_12m_aBin_ord", term)
+  )
+
+sequential_results
+
+# ============================================================
+# Sequential model fit table
+# ============================================================
+
+model_fit_table <- tibble::tibble(
+  outcome = c(
+    rep("Any ADL decline", 3),
+    rep("Any current ADL burden", 3),
+    rep("Current ADL burden count", 3),
+    rep("MMT-R total", 3),
+    rep("Morisky-4 total", 3)
+  ),
+  model = rep(
+    c(
+      "Step 1: disease severity only",
+      "Step 2: disease severity + cannabis",
+      "Step 3: full adjustment"
+    ),
+    times = 5
+  ),
+  n = c(
+    nobs(m_adl_decline_s1),
+    nobs(m_adl_decline_s2),
+    nobs(m_adl_decline_s3),
+    
+    nobs(m_current_binary_s1),
+    nobs(m_current_binary_s2),
+    nobs(m_current_binary_s3),
+    
+    nobs(m_current_count_s1),
+    nobs(m_current_count_s2),
+    nobs(m_current_count_s3),
+    
+    nobs(m_mmt_s1),
+    nobs(m_mmt_s2),
+    nobs(m_mmt_s3),
+    
+    nobs(m_morisky_s1),
+    nobs(m_morisky_s2),
+    nobs(m_morisky_s3)
+  ),
+  AIC = c(
+    AIC(m_adl_decline_s1),
+    AIC(m_adl_decline_s2),
+    AIC(m_adl_decline_s3),
+    
+    AIC(m_current_binary_s1),
+    AIC(m_current_binary_s2),
+    AIC(m_current_binary_s3),
+    
+    AIC(m_current_count_s1),
+    AIC(m_current_count_s2),
+    AIC(m_current_count_s3),
+    
+    AIC(m_mmt_s1),
+    AIC(m_mmt_s2),
+    AIC(m_mmt_s3),
+    
+    AIC(m_morisky_s1),
+    AIC(m_morisky_s2),
+    AIC(m_morisky_s3)
+  )
+)
+
+model_fit_table
+
+# ============================================================
+# Model comparison tests
+# ============================================================
+
+anova(m_adl_decline_s1, m_adl_decline_s2, m_adl_decline_s3, test = "Chisq")
+anova(m_current_binary_s1, m_current_binary_s2, m_current_binary_s3, test = "Chisq")
+anova(m_current_count_s1, m_current_count_s2, m_current_count_s3, test = "Chisq")
+
+anova(m_mmt_s1, m_mmt_s2, m_mmt_s3)
+
+anova(m_morisky_s1, m_morisky_s2, m_morisky_s3)
+
+# ============================================================
+# Morisky predicted probabilities by cannabis group
+# Final adjusted ordinal model
+# ============================================================
+
+morisky_probs <- emmeans::emmeans(
+  m_morisky_final,
+  ~ du_mar4_12m_aBin_ord | mac_tmr4_ord,
+  mode = "prob"
+)
+
+morisky_probs
+
+
+morisky_probs_df <- as.data.frame(morisky_probs) %>%
+  dplyr::rename(
+    cannabis_group = du_mar4_12m_aBin_ord,
+    morisky_score = mac_tmr4_ord,
+    predicted_probability = prob,
+    se = SE,
+    ci_lower = asymp.LCL,
+    ci_upper = asymp.UCL
+  ) %>%
+  dplyr::mutate(
+    cannabis_group = factor(
+      cannabis_group,
+      levels = c("none", "low", "high"),
+      labels = c("None", "Low", "High")
+    ),
+    morisky_score = factor(
+      morisky_score,
+      levels = sort(unique(as.numeric(as.character(morisky_score)))),
+      ordered = TRUE
+    )
+  )
+
+morisky_probs_df
+
+fig_morisky_probs_facet <- ggplot(
+  morisky_probs_df,
+  aes(
+    x = cannabis_group,
+    y = predicted_probability,
+    group = 1
+  )
+) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.8) +
+  geom_errorbar(
+    aes(
+      ymin = ci_lower,
+      ymax = ci_upper
+    ),
+    width = 0.08,
+    linewidth = 0.6
+  ) +
+  facet_wrap(~ morisky_score, nrow = 1) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.20),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    x = "Past-year cannabis exposure",
+    y = "Adjusted predicted probability"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11)
+  )
+
+fig_morisky_probs_facet
+
+fig_morisky_probs_lines <- ggplot(
+  morisky_probs_df,
+  aes(
+    x = cannabis_group,
+    y = predicted_probability,
+    group = morisky_score,
+    linetype = morisky_score,
+    shape = morisky_score
+  )
+) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.8) +
+  geom_errorbar(
+    aes(
+      ymin = ci_lower,
+      ymax = ci_upper
+    ),
+    width = 0.08,
+    linewidth = 0.6
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.10),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    x = "Past-year cannabis exposure",
+    y = "Adjusted predicted probability",
+    linetype = "Morisky-4 score",
+    shape = "Morisky-4 score"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "right",
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10)
+  )
+
+fig_morisky_probs_lines
+
+# ============================================================
+# Descriptive ADL decline severity by cannabis group
+# ============================================================
+
+adl_severity_cannabis_tab <- table(
+  cannabis = adl_work$du_mar4_12m_aBin_ord,
+  adl_severity = adl_work$adl_decline_severity_3cat_calc
+)
+
+adl_severity_cannabis_tab
+
+round(
+  prop.table(adl_severity_cannabis_tab, margin = 1) * 100,
+  1
+)
+
+chi_obj <- chisq.test(adl_severity_cannabis_tab)
+
+cramers_v <- sqrt(
+  as.numeric(chi_obj$statistic) /
+    (
+      sum(adl_severity_cannabis_tab) *
+        (min(dim(adl_severity_cannabis_tab)) - 1)
+    )
+)
+
+adl_severity_chi_summary <- tibble::tibble(
+  test = "Cannabis group x ADL decline severity",
+  chi_square = as.numeric(chi_obj$statistic),
+  df = as.numeric(chi_obj$parameter),
+  p_value = chi_obj$p.value,
+  cramers_v = cramers_v
+)
+
+adl_severity_chi_summary
+
+
+       
+
+
+# ============================================================
+# ADL OUTCOME ANALYSES
+# Hierarchical models + pre-model feasibility/power diagnostics
+# ============================================================
+
+library(dplyr)
+library(broom)
+library(MASS)
+library(emmeans)
+library(lmtest)
+library(sandwich)
+
+# ============================================================
+# 0. Create final ADL outcomes
+# ============================================================
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    
+    # Proportional ADL decline score
+    adl_total_calc = (adl_b_sum_now - adl_c_sum_best) / adl_a_no,
+    
+    # Model 1 outcome: any ADL decline yes/no
+    adl_any_decline_calc = dplyr::case_when(
+      is.na(adl_total_calc) ~ NA_character_,
+      adl_total_calc == 0 ~ "no_decline",
+      adl_total_calc > 0 ~ "any_decline"
+    ),
+    adl_any_decline_calc = factor(
+      adl_any_decline_calc,
+      levels = c("no_decline", "any_decline")
+    ),
+    
+    # Current ADL burden count
+    # adl_b_sum_now minimum is 1, so subtract 1 so 0 = no current burden
+    adl_b_now_excess = adl_b_sum_now - 1,
+    
+    # Model 3 outcome: any current ADL burden yes/no
+    adl_any_current_burden = dplyr::case_when(
+      is.na(adl_b_now_excess) ~ NA_character_,
+      adl_b_now_excess == 0 ~ "no_current_burden",
+      adl_b_now_excess > 0 ~ "any_current_burden"
+    ),
+    adl_any_current_burden = factor(
+      adl_any_current_burden,
+      levels = c("no_current_burden", "any_current_burden")
+    )
+  )
+
+# Median among people with any decline
+positive_median_adl_calc <- median(
+  adl_work$adl_total_calc[adl_work$adl_total_calc > 0],
+  na.rm = TRUE
+)
+
+positive_median_adl_calc
+
+# Model 2 outcome: no/lower/greater decline severity
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    adl_decline_severity_3cat_calc = dplyr::case_when(
+      is.na(adl_total_calc) ~ NA_character_,
+      adl_total_calc == 0 ~ "no_decline",
+      adl_total_calc > 0 & adl_total_calc <= positive_median_adl_calc ~ "lower_decline",
+      adl_total_calc > positive_median_adl_calc ~ "greater_decline"
+    ),
+    adl_decline_severity_3cat_calc = factor(
+      adl_decline_severity_3cat_calc,
+      levels = c("no_decline", "lower_decline", "greater_decline"),
+      ordered = TRUE
+    )
+  )
+
+# ============================================================
+# 1. Outcome distributions
+# ============================================================
+
+table(adl_work$adl_any_decline_calc, useNA = "ifany")
+table(adl_work$adl_decline_severity_3cat_calc, useNA = "ifany")
+table(adl_work$adl_any_current_burden, useNA = "ifany")
+table(adl_work$adl_b_now_excess, useNA = "ifany")
+
+# Cross-tabs by cannabis group
+table(adl_work$du_mar4_12m_aBin_ord, adl_work$adl_any_decline_calc, useNA = "ifany")
+table(adl_work$du_mar4_12m_aBin_ord, adl_work$adl_decline_severity_3cat_calc, useNA = "ifany")
+table(adl_work$du_mar4_12m_aBin_ord, adl_work$adl_any_current_burden, useNA = "ifany")
+
+# Proportions by cannabis group
+prop.table(
+  table(adl_work$du_mar4_12m_aBin_ord, adl_work$adl_any_decline_calc),
+  margin = 1
+)
+
+prop.table(
+  table(adl_work$du_mar4_12m_aBin_ord, adl_work$adl_decline_severity_3cat_calc),
+  margin = 1
+)
+
+prop.table(
+  table(adl_work$du_mar4_12m_aBin_ord, adl_work$adl_any_current_burden),
+  margin = 1
+)
+
+# ============================================================
+# 2. Feasibility checks: events per parameter
+# ============================================================
+
+# Number of model df/predictor parameters in final model
+# Cannabis ordered factor contributes 2 df: linear + quadratic
+# plus age, BDI, sex, DiseaseSev = 4 more
+# total approximate predictor df = 6
+
+final_model_df <- 6
+
+# Binary decline outcome
+binary_decline_counts <- table(adl_work$adl_any_decline_calc)
+binary_decline_epv <- min(binary_decline_counts) / final_model_df
+
+binary_decline_counts
+binary_decline_epv
+
+# 3-level decline severity outcome
+severity_counts <- table(adl_work$adl_decline_severity_3cat_calc)
+severity_min_cell_per_df <- min(severity_counts) / final_model_df
+
+severity_counts
+severity_min_cell_per_df
+
+# Binary current burden outcome
+current_burden_counts <- table(adl_work$adl_any_current_burden)
+current_burden_epv <- min(current_burden_counts) / final_model_df
+
+current_burden_counts
+current_burden_epv
+
+# Current burden count outcome distribution
+summary(adl_work$adl_b_now_excess)
+mean(adl_work$adl_b_now_excess, na.rm = TRUE)
+var(adl_work$adl_b_now_excess, na.rm = TRUE)
+var(adl_work$adl_b_now_excess, na.rm = TRUE) /
+  mean(adl_work$adl_b_now_excess, na.rm = TRUE)
+
+# Make one compact feasibility table
+feasibility_table <- tibble::tibble(
+  outcome = c(
+    "Binary ADL decline",
+    "3-level ADL decline severity",
+    "Binary current ADL burden",
+    "Current ADL burden count"
+  ),
+  n = c(
+    sum(!is.na(adl_work$adl_any_decline_calc)),
+    sum(!is.na(adl_work$adl_decline_severity_3cat_calc)),
+    sum(!is.na(adl_work$adl_any_current_burden)),
+    sum(!is.na(adl_work$adl_b_now_excess))
+  ),
+  smallest_cell_or_event_n = c(
+    min(binary_decline_counts),
+    min(severity_counts),
+    min(current_burden_counts),
+    sum(adl_work$adl_b_now_excess == 0, na.rm = TRUE)
+  ),
+  model_df = final_model_df,
+  smallest_cell_per_df = c(
+    binary_decline_epv,
+    severity_min_cell_per_df,
+    current_burden_epv,
+    NA_real_
+  )
+)
+
+feasibility_table
+
+# ============================================================
+# MODEL 1: Binary ADL decline yes/no
+# Outcome: adl_any_decline_calc
+# ============================================================
+
+m1_adl_decline_binary_0 <- glm(
+  adl_any_decline_calc ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m1_adl_decline_binary_core <- glm(
+  adl_any_decline_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m1_adl_decline_binary_disease <- glm(
+  adl_any_decline_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m1_results <- dplyr::bind_rows(
+  broom::tidy(m1_adl_decline_binary_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  broom::tidy(m1_adl_decline_binary_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  broom::tidy(m1_adl_decline_binary_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m1_results
+
+emmeans::emmeans(
+  m1_adl_decline_binary_disease,
+  ~ du_mar4_12m_aBin_ord,
+  type = "response"
+)
+
+pairs(
+  emmeans::emmeans(
+    m1_adl_decline_binary_disease,
+    ~ du_mar4_12m_aBin_ord,
+    type = "response"
+  )
+)
+
+# ============================================================
+# MODEL 2: 3-level ADL decline severity
+# Outcome: adl_decline_severity_3cat_calc
+# ============================================================
+
+m2_adl_decline_severity_0 <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m2_adl_decline_severity_core <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m2_adl_decline_severity_disease <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  Hess = TRUE
+)
+
+# polr helper with p-values
+tidy_polr_with_p <- function(model, model_name) {
+  broom::tidy(model, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      model = model_name
+    ) %>%
+    dplyr::select(model, term, estimate, conf.low, conf.high, statistic, p.value)
+}
+
+m2_results <- dplyr::bind_rows(
+  tidy_polr_with_p(m2_adl_decline_severity_0, "Model 0: cannabis only"),
+  tidy_polr_with_p(m2_adl_decline_severity_core, "Model 1: core adjusted"),
+  tidy_polr_with_p(m2_adl_decline_severity_disease, "Model 2: disease severity adjusted")
+)
+
+# Keep predictor rows only; remove threshold/cutpoint rows
+m2_results_predictors <- m2_results %>%
+  dplyr::filter(
+    !grepl("no_decline|lower_decline", term)
+  )
+
+m2_results_predictors
+
+# Predicted probabilities by cannabis group
+emmeans::emmeans(
+  m2_adl_decline_severity_disease,
+  ~ du_mar4_12m_aBin_ord,
+  mode = "prob"
+)
+
+# ============================================================
+# MODEL 3: Binary current ADL burden yes/no
+# Outcome: adl_any_current_burden
+# ============================================================
+
+m3_current_burden_binary_0 <- glm(
+  adl_any_current_burden ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m3_current_burden_binary_core <- glm(
+  adl_any_current_burden ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m3_current_burden_binary_disease <- glm(
+  adl_any_current_burden ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m3_results <- dplyr::bind_rows(
+  broom::tidy(m3_current_burden_binary_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  broom::tidy(m3_current_burden_binary_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  broom::tidy(m3_current_burden_binary_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m3_results
+
+emmeans::emmeans(
+  m3_current_burden_binary_disease,
+  ~ du_mar4_12m_aBin_ord,
+  type = "response"
+)
+
+pairs(
+  emmeans::emmeans(
+    m3_current_burden_binary_disease,
+    ~ du_mar4_12m_aBin_ord,
+    type = "response"
+  )
+)
+
+# ============================================================
+# MODEL 4: Current ADL burden count
+# Outcome: adl_b_now_excess
+# ============================================================
+
+# First fit Poisson models to test overdispersion
+m4_current_burden_pois_0 <- glm(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = poisson(link = "log")
+)
+
+m4_current_burden_pois_core <- glm(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = poisson(link = "log")
+)
+
+m4_current_burden_pois_disease <- glm(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work,
+  family = poisson(link = "log")
+)
+
+check_overdispersion <- function(model) {
+  pearson_chisq <- sum(residuals(model, type = "pearson")^2)
+  df <- df.residual(model)
+  ratio <- pearson_chisq / df
+  p <- pchisq(pearson_chisq, df = df, lower.tail = FALSE)
+  
+  data.frame(
+    pearson_chisq = pearson_chisq,
+    df = df,
+    dispersion_ratio = ratio,
+    p_value = p
+  )
+}
+
+check_overdispersion(m4_current_burden_pois_0)
+check_overdispersion(m4_current_burden_pois_core)
+check_overdispersion(m4_current_burden_pois_disease)
+
+# Negative binomial models
+m4_current_burden_nb_0 <- MASS::glm.nb(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m4_current_burden_nb_core <- MASS::glm.nb(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+m4_current_burden_nb_disease <- MASS::glm.nb(
+  adl_b_now_excess ~ du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac +
+    DiseaseSev_c,
+  data = adl_work
+)
+
+# Compare Poisson vs negative binomial
+AIC(
+  m4_current_burden_pois_0, m4_current_burden_nb_0,
+  m4_current_burden_pois_core, m4_current_burden_nb_core,
+  m4_current_burden_pois_disease, m4_current_burden_nb_disease
+)
+
+BIC(
+  m4_current_burden_pois_0, m4_current_burden_nb_0,
+  m4_current_burden_pois_core, m4_current_burden_nb_core,
+  m4_current_burden_pois_disease, m4_current_burden_nb_disease
+)
+
+# Extract incidence rate ratios from negative binomial models
+m4_results <- dplyr::bind_rows(
+  broom::tidy(m4_current_burden_nb_0, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 0: cannabis only"),
+  broom::tidy(m4_current_burden_nb_core, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 1: core adjusted"),
+  broom::tidy(m4_current_burden_nb_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Model 2: disease severity adjusted")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m4_results
+
+emmeans::emmeans(
+  m4_current_burden_nb_disease,
+  ~ du_mar4_12m_aBin_ord,
+  type = "response"
+)
+
+pairs(
+  emmeans::emmeans(
+    m4_current_burden_nb_disease,
+    ~ du_mar4_12m_aBin_ord,
+    type = "response"
+  )
+)
+
+# ============================================================
+# Combined cannabis effects across outcomes
+# ============================================================
+
+all_adl_results <- dplyr::bind_rows(
+  m1_results %>%
+    dplyr::mutate(
+      outcome = "Binary ADL decline",
+      estimate_type = "Odds ratio"
+    ),
+  
+  m2_results_predictors %>%
+    dplyr::mutate(
+      outcome = "3-level ADL decline severity",
+      estimate_type = "Proportional odds ratio"
+    ),
+  
+  m3_results %>%
+    dplyr::mutate(
+      outcome = "Binary current ADL burden",
+      estimate_type = "Odds ratio"
+    ),
+  
+  m4_results %>%
+    dplyr::mutate(
+      outcome = "Current ADL burden count",
+      estimate_type = "Incidence rate ratio"
+    )
+) %>%
+  dplyr::filter(grepl("du_mar4_12m_aBin_ord", term)) %>%
+  dplyr::select(
+    outcome,
+    estimate_type,
+    model,
+    term,
+    estimate,
+    conf.low,
+    conf.high,
+    p.value
+  )
+
+all_adl_results
+
+# ============================================================
+# Analytic N by outcome and model step
+# ============================================================
+
+model_n_table <- tibble::tibble(
+  outcome = c(
+    "Binary ADL decline",
+    "3-level ADL decline severity",
+    "Binary current ADL burden",
+    "Current ADL burden count"
+  ),
+  model_0_n = c(
+    nobs(m1_adl_decline_binary_0),
+    nobs(m2_adl_decline_severity_0),
+    nobs(m3_current_burden_binary_0),
+    nobs(m4_current_burden_nb_0)
+  ),
+  model_1_n = c(
+    nobs(m1_adl_decline_binary_core),
+    nobs(m2_adl_decline_severity_core),
+    nobs(m3_current_burden_binary_core),
+    nobs(m4_current_burden_nb_core)
+  ),
+  model_2_n = c(
+    nobs(m1_adl_decline_binary_disease),
+    nobs(m2_adl_decline_severity_disease),
+    nobs(m3_current_burden_binary_disease),
+    nobs(m4_current_burden_nb_disease)
+  )
+)
+
+model_n_table
+
+emmeans::emmeans(
+  m2_adl_decline_severity_disease,
+  ~ du_mar4_12m_aBin_ord | adl_decline_severity_3cat_calc,
+  mode = "prob"
+)
+
+# ============================================================
+# OUTCOME 1: Binary ADL decline yes/no
+# Step 1: Disease severity
+# Step 2: Add cannabis
+# Step 3: Add covariates
+# ============================================================
+
+m1_decline_step1_disease <- glm(
+  adl_any_decline_calc ~ DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m1_decline_step2_disease_cannabis <- glm(
+  adl_any_decline_calc ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m1_decline_step3_full <- glm(
+  adl_any_decline_calc ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m1_step_results <- dplyr::bind_rows(
+  broom::tidy(m1_decline_step1_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 1: disease severity only"),
+  
+  broom::tidy(m1_decline_step2_disease_cannabis, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 2: disease severity + cannabis"),
+  
+  broom::tidy(m1_decline_step3_full, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 3: disease severity + cannabis + covariates")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m1_step_results
+
+anova(
+  m1_decline_step1_disease,
+  m1_decline_step2_disease_cannabis,
+  m1_decline_step3_full,
+  test = "Chisq"
+)
+
+AIC(
+  m1_decline_step1_disease,
+  m1_decline_step2_disease_cannabis,
+  m1_decline_step3_full
+)
+
+
+# ============================================================
+# OUTCOME 2: 3-level ADL decline severity
+# ============================================================
+
+m2_severity_step1_disease <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ DiseaseSev_c,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m2_severity_step2_disease_cannabis <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m2_severity_step3_full <- MASS::polr(
+  adl_decline_severity_3cat_calc ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+tidy_polr_with_p <- function(model, model_name) {
+  broom::tidy(model, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      model = model_name
+    ) %>%
+    dplyr::select(model, term, estimate, conf.low, conf.high, statistic, p.value)
+}
+
+m2_step_results <- dplyr::bind_rows(
+  tidy_polr_with_p(m2_severity_step1_disease, "Step 1: disease severity only"),
+  tidy_polr_with_p(m2_severity_step2_disease_cannabis, "Step 2: disease severity + cannabis"),
+  tidy_polr_with_p(m2_severity_step3_full, "Step 3: disease severity + cannabis + covariates")
+) %>%
+  dplyr::filter(!grepl("no_decline|lower_decline", term))
+
+m2_step_results
+
+anova(
+  m2_severity_step1_disease,
+  m2_severity_step2_disease_cannabis,
+  m2_severity_step3_full
+)
+
+AIC(
+  m2_severity_step1_disease,
+  m2_severity_step2_disease_cannabis,
+  m2_severity_step3_full
+)
+
+emmeans::emmeans(
+  m2_severity_step3_full,
+  ~ du_mar4_12m_aBin_ord | adl_decline_severity_3cat_calc,
+  mode = "prob"
+)
+
+# ============================================================
+# OUTCOME 3: Binary current ADL burden yes/no
+# ============================================================
+
+m3_current_step1_disease <- glm(
+  adl_any_current_burden ~ DiseaseSev_c,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m3_current_step2_disease_cannabis <- glm(
+  adl_any_current_burden ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m3_current_step3_full <- glm(
+  adl_any_current_burden ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  family = binomial(link = "logit")
+)
+
+m3_step_results <- dplyr::bind_rows(
+  broom::tidy(m3_current_step1_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 1: disease severity only"),
+  
+  broom::tidy(m3_current_step2_disease_cannabis, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 2: disease severity + cannabis"),
+  
+  broom::tidy(m3_current_step3_full, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 3: disease severity + cannabis + covariates")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m3_step_results
+
+anova(
+  m3_current_step1_disease,
+  m3_current_step2_disease_cannabis,
+  m3_current_step3_full,
+  test = "Chisq"
+)
+
+AIC(
+  m3_current_step1_disease,
+  m3_current_step2_disease_cannabis,
+  m3_current_step3_full
+)
+
+# ============================================================
+# OUTCOME 4: Current ADL burden count
+# Negative binomial
+# ============================================================
+
+m4_count_step1_disease <- MASS::glm.nb(
+  adl_b_now_excess ~ DiseaseSev_c,
+  data = adl_work
+)
+
+m4_count_step2_disease_cannabis <- MASS::glm.nb(
+  adl_b_now_excess ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work
+)
+
+m4_count_step3_full <- MASS::glm.nb(
+  adl_b_now_excess ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work
+)
+
+m4_step_results <- dplyr::bind_rows(
+  broom::tidy(m4_count_step1_disease, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 1: disease severity only"),
+  
+  broom::tidy(m4_count_step2_disease_cannabis, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 2: disease severity + cannabis"),
+  
+  broom::tidy(m4_count_step3_full, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(model = "Step 3: disease severity + cannabis + covariates")
+) %>%
+  dplyr::select(model, term, estimate, conf.low, conf.high, p.value)
+
+m4_step_results
+
+anova(
+  m4_count_step1_disease,
+  m4_count_step2_disease_cannabis,
+  m4_count_step3_full,
+  test = "Chisq"
+)
+
+AIC(
+  m4_count_step1_disease,
+  m4_count_step2_disease_cannabis,
+  m4_count_step3_full
+)
+
+# ============================================================
+# Combined disease severity and cannabis results
+# ============================================================
+
+combined_step_results <- dplyr::bind_rows(
+  m1_step_results %>%
+    dplyr::mutate(
+      outcome = "Binary ADL decline",
+      estimate_type = "Odds ratio"
+    ),
+  
+  m2_step_results %>%
+    dplyr::mutate(
+      outcome = "3-level ADL decline severity",
+      estimate_type = "Proportional odds ratio"
+    ),
+  
+  m3_step_results %>%
+    dplyr::mutate(
+      outcome = "Binary current ADL burden",
+      estimate_type = "Odds ratio"
+    ),
+  
+  m4_step_results %>%
+    dplyr::mutate(
+      outcome = "Current ADL burden count",
+      estimate_type = "Incidence rate ratio"
+    )
+) %>%
+  dplyr::filter(
+    grepl("DiseaseSev_c|du_mar4_12m_aBin_ord", term)
+  ) %>%
+  dplyr::select(
+    outcome,
+    estimate_type,
+    model,
+    term,
+    estimate,
+    conf.low,
+    conf.high,
+    p.value
+  )
+
+combined_step_results
+
+model_n_step_table <- tibble::tibble(
+  outcome = c(
+    "Binary ADL decline",
+    "3-level ADL decline severity",
+    "Binary current ADL burden",
+    "Current ADL burden count"
+  ),
+  step1_disease_n = c(
+    nobs(m1_decline_step1_disease),
+    nobs(m2_severity_step1_disease),
+    nobs(m3_current_step1_disease),
+    nobs(m4_count_step1_disease)
+  ),
+  step2_disease_cannabis_n = c(
+    nobs(m1_decline_step2_disease_cannabis),
+    nobs(m2_severity_step2_disease_cannabis),
+    nobs(m3_current_step2_disease_cannabis),
+    nobs(m4_count_step2_disease_cannabis)
+  ),
+  step3_full_n = c(
+    nobs(m1_decline_step3_full),
+    nobs(m2_severity_step3_full),
+    nobs(m3_current_step3_full),
+    nobs(m4_count_step3_full)
+  )
+)
+
+
+# ============================================================
+# Ordinal current ADL burden severity
+# 0 = no current burden
+# 1 = lower current burden among those with burden
+# 2 = higher current burden among those with burden
+# ============================================================
+
+current_burden_positive_median <- median(
+  adl_work$adl_b_now_excess[adl_work$adl_b_now_excess > 0],
+  na.rm = TRUE
+)
+
+current_burden_positive_median
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    adl_current_burden_3cat = dplyr::case_when(
+      is.na(adl_b_now_excess) ~ NA_character_,
+      adl_b_now_excess == 0 ~ "no_current_burden",
+      adl_b_now_excess > 0 &
+        adl_b_now_excess <= current_burden_positive_median ~ "lower_current_burden",
+      adl_b_now_excess > current_burden_positive_median ~ "higher_current_burden"
+    ),
+    adl_current_burden_3cat = factor(
+      adl_current_burden_3cat,
+      levels = c(
+        "no_current_burden",
+        "lower_current_burden",
+        "higher_current_burden"
+      ),
+      ordered = TRUE
+    )
+  )
+
+table(adl_work$adl_current_burden_3cat, useNA = "ifany")
+
+# ============================================================
+# Ordinal current ADL burden severity model
+# ============================================================
+
+m_current_ord_step1_disease <- MASS::polr(
+  adl_current_burden_3cat ~ DiseaseSev_c,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m_current_ord_step2_disease_cannabis <- MASS::polr(
+  adl_current_burden_3cat ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord,
+  data = adl_work,
+  Hess = TRUE
+)
+
+m_current_ord_step3_full <- MASS::polr(
+  adl_current_burden_3cat ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  Hess = TRUE
+)
+
+tidy_polr_with_p <- function(model, model_name) {
+  broom::tidy(model, conf.int = TRUE, exponentiate = TRUE) %>%
+    dplyr::mutate(
+      p.value = ifelse(
+        !is.na(statistic),
+        2 * pnorm(abs(statistic), lower.tail = FALSE),
+        NA_real_
+      ),
+      model = model_name
+    ) %>%
+    dplyr::select(model, term, estimate, conf.low, conf.high, statistic, p.value)
+}
+
+current_ord_results <- dplyr::bind_rows(
+  tidy_polr_with_p(m_current_ord_step1_disease, "Step 1: disease severity only"),
+  tidy_polr_with_p(m_current_ord_step2_disease_cannabis, "Step 2: disease severity + cannabis"),
+  tidy_polr_with_p(m_current_ord_step3_full, "Step 3: disease severity + cannabis + covariates")
+) %>%
+  dplyr::filter(
+    !grepl("no_current_burden|lower_current_burden", term)
+  )
+
+current_ord_results
+
+emmeans::emmeans(
+  m_current_ord_step3_full,
+  ~ du_mar4_12m_aBin_ord | adl_current_burden_3cat,
+  mode = "prob"
+)
+
+# ============================================================
+# FIGURE: Adjusted predicted probabilities for ADL decline severity
+# by cannabis group
+# ============================================================
+
+library(dplyr)
+library(ggplot2)
+library(emmeans)
+
+# Estimated marginal probabilities from final ordinal model
+emm_decline_severity_fig <- emmeans::emmeans(
+  m2_severity_step3_full,
+  ~ du_mar4_12m_aBin_ord | adl_decline_severity_3cat_calc,
+  mode = "prob"
+)
+
+emm_decline_severity_fig
+
+decline_severity_fig_df <- as.data.frame(emm_decline_severity_fig) %>%
+  dplyr::rename(
+    cannabis_group = du_mar4_12m_aBin_ord,
+    decline_severity = adl_decline_severity_3cat_calc,
+    predicted_probability = prob,
+    se = SE,
+    ci_lower = asymp.LCL,
+    ci_upper = asymp.UCL
+  ) %>%
+  dplyr::mutate(
+    cannabis_group = factor(
+      cannabis_group,
+      levels = c("none", "low", "high"),
+      labels = c("None", "Low", "High")
+    ),
+    decline_severity = factor(
+      decline_severity,
+      levels = c("no_decline", "lower_decline", "greater_decline"),
+      labels = c("No decline", "Lower decline", "Greater decline")
+    )
+  )
+
+decline_severity_fig_df
+
+fig_decline_severity_probs <- ggplot(
+  decline_severity_fig_df,
+  aes(
+    x = cannabis_group,
+    y = predicted_probability,
+    group = decline_severity,
+    linetype = decline_severity,
+    shape = decline_severity
+  )
+) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.8) +
+  geom_errorbar(
+    aes(
+      ymin = ci_lower,
+      ymax = ci_upper
+    ),
+    width = 0.08,
+    linewidth = 0.6
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.10),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    x = "Past-year cannabis exposure",
+    y = "Adjusted predicted probability",
+    linetype = "ADL decline severity",
+    shape = "ADL decline severity"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "right",
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11),
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10)
+  )
+
+fig_decline_severity_probs
+
+
+fig_decline_severity_probs_facet <- ggplot(
+  decline_severity_fig_df,
+  aes(
+    x = cannabis_group,
+    y = predicted_probability
+  )
+) +
+  geom_point(size = 2.8) +
+  geom_errorbar(
+    aes(
+      ymin = ci_lower,
+      ymax = ci_upper
+    ),
+    width = 0.08,
+    linewidth = 0.6
+  ) +
+  geom_line(aes(group = 1), linewidth = 0.8) +
+  facet_wrap(~ decline_severity, nrow = 1) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.20),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    x = "Past-year cannabis exposure",
+    y = "Adjusted predicted probability"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 11)
+  )
+
+fig_decline_severity_probs_facet
+
+# Cross-tab
+adl_severity_cannabis_tab <- table(
+  cannabis = adl_work$du_mar4_12m_aBin_ord,
+  adl_severity = adl_work$adl_decline_severity_3cat_calc
+)
+
+adl_severity_cannabis_tab
+
+# Chi-square test
+chisq.test(adl_severity_cannabis_tab)
+
+# If expected cells are small, use Fisher's exact test
+fisher.test(adl_severity_cannabis_tab)
+
+chisq.test(adl_severity_cannabis_tab)$expected
+
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    cannabis_ord_num = as.numeric(du_mar4_12m_aBin_ord), 
+    adl_severity_num = as.numeric(adl_decline_severity_3cat_calc) - 1
+  )
+
+cor.test(
+  adl_work$cannabis_ord_num,
+  adl_work$adl_severity_num,
+  method = "spearman"
+)
+
+# ============================================================
+# Cramer's V without rcompanion
+# ============================================================
+
+chi_obj <- chisq.test(adl_severity_cannabis_tab)
+
+cramers_v <- sqrt(
+  as.numeric(chi_obj$statistic) /
+    (
+      sum(adl_severity_cannabis_tab) *
+        (min(dim(adl_severity_cannabis_tab)) - 1)
+    )
+)
+
+cramers_v 
+
+chi_effect_summary <- tibble::tibble(
+  test = "Cannabis group x ADL decline severity",
+  chi_square = as.numeric(chi_obj$statistic),
+  df = as.numeric(chi_obj$parameter),
+  p_value = chi_obj$p.value,
+  cramers_v = cramers_v
+)
+
+chi_effect_summary
+
+round(
+  prop.table(adl_severity_cannabis_tab, margin = 1) * 100,
+  1
+)
+
+
+
+library(nnet)
+library(broom)
+library(dplyr)
+
+# Make unordered version for multinomial model
+adl_work <- adl_work %>%
+  dplyr::mutate(
+    adl_decline_severity_nominal = factor(
+      as.character(adl_decline_severity_3cat_calc),
+      levels = c("no_decline", "lower_decline", "greater_decline")
+    )
+  )
+
+# Disease-first sequence: full model
+m2_decline_multinom_full <- nnet::multinom(
+  adl_decline_severity_nominal ~ DiseaseSev_c +
+    du_mar4_12m_aBin_ord +
+    phq_2_age_c +
+    bdi_total +
+    sex_covfac,
+  data = adl_work,
+  trace = FALSE
+)
+
+summary(m2_decline_multinom_full)
+
+# Tidy exponentiated relative risk ratios
+m2_decline_multinom_results <- broom::tidy(
+  m2_decline_multinom_full,
+  conf.int = TRUE,
+  exponentiate = TRUE
+)
+
+m2_decline_multinom_results
+
+
