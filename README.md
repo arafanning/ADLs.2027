@@ -1,3 +1,1 @@
-# Synthetic data
-
-Place only simulated or otherwise approved example data here.
+Review Syntax used for dissertation 3
