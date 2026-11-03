@@ -21,5 +21,5 @@ Participant-level data are **restricted and not publicly shared**. The repositor
 ## Related research
 
 - [Published joint effects of HIV and cannabis](https://github.com/arafanning/Joint.Effects.2025)
-- [Cannabis-use levels and neurocognition](https://github.com/arafanning/Nonlinear.Associations.2026)
+- [Cannabis-use levels and neurocognition](https://github.com/arafanning/HIV.Cannabis.Neurocognition.2026)
 - [Academic website and dissertation overview](https://arafanning.github.io/)
